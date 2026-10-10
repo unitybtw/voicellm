@@ -14,6 +14,8 @@ from src.data.video_audio import file_sha256
 @torch.inference_mode()
 def review(checkpoint,output,device='cpu'):
     torch.set_num_threads(4);digest=file_sha256(checkpoint)
+    decoder_path=Path(__file__).resolve().parents[1]/'src/codec/linear_spectrum.py'
+    decoder_digest=file_sha256(decoder_path)
     model=UnifiedVoiceModel.load(checkpoint).float().to(device)
     if not isinstance(model,AlignedVoiceModel):raise ValueError('Native aligned model required')
     results={};examples=[]
@@ -36,11 +38,13 @@ def review(checkpoint,output,device='cpu'):
             'predicted_f0_min_hz':float((controls[...,0].clamp(-2.1,1.4)*.5+torch.tensor(200.).log()).exp().min()),
             'predicted_f0_max_hz':float((controls[...,0].clamp(-2.1,1.4)*.5+torch.tensor(200.).log()).exp().max())})
     if file_sha256(checkpoint)!=digest:raise RuntimeError('Checkpoint changed during review; retry after training completes')
+    if file_sha256(decoder_path)!=decoder_digest:raise RuntimeError('Decoder source changed during review; retry after edits finish')
     report={'checkpoint_sha256':digest,'model_kind':model.model_kind,'clock_mode':model.config.clock_mode,
         'periodic_prior_mode':model.config.periodic_prior_mode,
         'speech_steps':int(model.speech_steps),'parameters':model.count_parameters(),'checkpoint_mib':checkpoint.stat().st_size/1048576,
         'external_weights':False,'user_audio_used':False,'dictionary_provenance':'data/pronunciation/provenance.json',
-        'phase_decoder':'Local harmonic source/filter with dynamic harmonic count, energy-calibrated filtered noise and equal-power voicing mix',
+        'phase_decoder':'Local harmonic source/filter with dynamic harmonic count, pitch-smoothed aperiodic noise, frame energy calibration and interpolated voiced/unvoiced class transitions',
+        'decoder_source_sha256':decoder_digest,
         'speech_ready':False,'human_listening_verified':False,'intelligibility_verified':False,'examples':examples,**results,
         'note':'Numerical spectrum and periodicity metrics do not establish correct words. The train sample is an explicit memorization sanity check. Synthesized audio never copies or mixes reference waveform.'}
     output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(report,indent=2)+'\n')

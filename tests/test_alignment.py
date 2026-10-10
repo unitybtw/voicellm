@@ -206,3 +206,19 @@ def test_unvoiced_confidence_prior_keeps_noise_spectrum_and_survives_save(tmp_pa
     del legacy['config']['periodic_prior_mode']
     assert AlignedVoiceModel.from_checkpoint(legacy).config.periodic_prior_mode=='probability'
     with pytest.raises(ValueError):AlignedConfig(periodic_prior_mode='bad')
+
+@pytest.mark.parametrize('probability',[.001,.1,.3])
+def test_noise_source_does_not_inherit_harmonic_lines_when_voicing_is_low(probability):
+    import math
+    codec=LinearSpectrum();time=torch.arange(16000)/16000
+    reference=.03*torch.sin(2*math.pi*200*time)
+    features=codec.encode(reference)[0]
+    controls=torch.zeros(1,features.shape[1],2)
+    controls[...,1]=math.log(probability/(1-probability))
+    # Inconsistent spectral/head predictions must not force the noise source
+    # to remain a tone. This is a control test, not a speech quality claim.
+    result=codec.decode_source_filter(features,controls)
+    _,voiced=pitch_labels(result)
+    assert voiced[:,4:-4].mean()<.1
+    ratio=float(result.square().mean().sqrt()/reference.square().mean().sqrt())
+    assert .8<ratio<1.2

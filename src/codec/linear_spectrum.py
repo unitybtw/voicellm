@@ -54,7 +54,9 @@ class LinearSpectrum(SpectralCodec):
         pitch=pitch.detach().float().cpu()[0]
         frames=mag.shape[0];length=(frames-1)*self.hop_length
         f0=(pitch[:,0].clamp(-2.1,1.4)*.5+torch.tensor(200.).log()).exp()
-        voice=pitch[:,1].sigmoid()
+        # This head predicts a binary class probability, not harmonic energy.
+        # Interpolation below smooths class changes over one acoustic hop.
+        voice=(pitch[:,1]>=0).float()
         # A fixed 64-harmonic cap discarded audible upper bands at low pitches.
         harmonics=torch.arange(1,math.ceil(self.sample_rate/2/float(f0.min()))+1).float()
         frequencies=f0[:,None]*harmonics[None]
@@ -77,8 +79,18 @@ class LinearSpectrum(SpectralCodec):
         sample_amplitude=sample_amplitude*(sample_f0[:,None]*harmonics[None]<self.sample_rate/2)
         harmonic=(torch.sin(phase[:,None]*harmonics[None])*sample_amplitude).sum(-1)
         generator=torch.Generator().manual_seed(97)
-        noise_phase=torch.rand(mag.T.shape,generator=generator)*6.2831853
-        noise=torch.istft(torch.polar(mag.T,noise_phase),self.n_fft,self.hop_length,window=self.window.float().cpu(),length=length)
+        # Random phase alone cannot make a harmonic spectrum aperiodic. Smooth
+        # its power over one pitch spacing before filtering the noise source.
+        widths=(f0*self.n_fft/self.sample_rate).ceil().long().clamp_min(3)
+        widths=widths+(widths%2==0).long()
+        noise_mag=torch.empty_like(mag)
+        power=mag.square()
+        for width in widths.unique().tolist():
+            mask=widths==width
+            noise_mag[mask]=F.avg_pool1d(power[mask,None],width,stride=1,
+                padding=width//2,count_include_pad=False)[:,0].sqrt()
+        noise_phase=torch.rand(noise_mag.T.shape,generator=generator)*6.2831853
+        noise=torch.istft(torch.polar(noise_mag.T,noise_phase),self.n_fft,self.hop_length,window=self.window.float().cpu(),length=length)
         # Independent random phases lose energy during overlap/add. Match the
         # predicted frame energy before mixing; otherwise even q=.2 becomes a buzz.
         noise_rms=F.avg_pool1d(noise.square()[None,None],self.n_fft,self.hop_length,

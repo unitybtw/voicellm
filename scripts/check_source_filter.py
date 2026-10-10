@@ -111,7 +111,7 @@ def synthetic_checks(codec, seed):
         'cases': cases,
         'checks': checks,
         'passed': all(checks.values()),
-        'half_probability_note': 'q=.5 removes the comb prior but still assigns half the DSP source power to harmonics; a low waveform-VAD assertion is deliberately not applied there.',
+        'half_probability_note': 'q=.5 removes the confidence comb prior but is classified as voiced by the DSP head threshold; a low waveform-VAD assertion is deliberately not applied there.',
     }
 
 
@@ -175,7 +175,7 @@ def run(output, seed=83, include_public=True):
         'sample_rate': codec.sample_rate,
         'n_fft': codec.n_fft,
         'hop_length': codec.hop_length,
-        'dsp_decoder': 'Current local equal-power harmonic/noise source-filter decoder.',
+        'dsp_decoder': 'Current local source-filter decoder with a voiced/unvoiced class decision, interpolated equal-power transitions, and pitch-smoothed aperiodic noise.',
         'checkpoint_loaded': False,
         'training_performed': False,
         'external_weights': False,
