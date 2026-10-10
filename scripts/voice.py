@@ -215,7 +215,7 @@ def train(model, args):
 
 def main():
     parser = argparse.ArgumentParser(description='Single native VoiceLLM; no remote model loaders')
-    parser.add_argument('command', choices=['benchmark', 'train', 'speak', 'narrate', 'export', 'prepare-video', 'reconstruct'])
+    parser.add_argument('command', choices=['benchmark', 'train', 'speak', 'narrate', 'export', 'prepare-video', 'reconstruct', 'clone'])
     parser.add_argument('--checkpoint', type=Path)
     parser.add_argument('--config', type=Path)
     parser.add_argument('--output', type=Path)
@@ -229,6 +229,7 @@ def main():
     parser.add_argument('--video', type=Path)
     parser.add_argument('--segment-seconds', type=float, default=4.)
     parser.add_argument('--audio', type=Path)
+    parser.add_argument('--reference', type=Path, help='Reference audio file for voice timbre cloning/adaptation')
     parser.add_argument('--manifest')
     parser.add_argument('--text-file')
     parser.add_argument('--steps', type=int, default=100)
@@ -247,8 +248,8 @@ def main():
         print(f"Prepared {len(report['segments'])} segments from {report['duration_seconds']:.2f}s video")
         return
     torch.manual_seed(args.seed)
-    if args.command in ['speak', 'narrate', 'export', 'reconstruct'] and not args.checkpoint:
-        parser.error('speak requires --checkpoint with speech training')
+    if args.command in ['speak', 'narrate', 'export', 'reconstruct', 'clone'] and not args.checkpoint:
+        parser.error(f'{args.command} requires --checkpoint with speech training')
     if args.config and args.checkpoint:
         parser.error('Checkpoint already contains its configuration; omit --config')
     config = UnifiedConfig(**json.loads(args.config.read_text())) if args.config else UnifiedConfig()
@@ -284,13 +285,14 @@ def main():
         lines = [line.strip() for line in Path(args.text_file).read_text().splitlines() if line.strip()]
         if not lines:
             raise ValueError('Story text is empty')
+        reference_wav = read_audio(args.reference, model.config.sample_rate) if args.reference else None
         narration = []
         for line in lines:
             frames = min(math.ceil(args.max_seconds*model.config.sample_rate/model.config.hop_length),
                          model.config.max_seq_len-len(model.tokenizer.encode(line))-1)
             if frames <= 0:
                 raise ValueError('Narration sentence exceeds context; split the sentence')
-            chunks = list(model.stream(line, max_frames=frames, temperature=args.temperature))
+            chunks = list(model.stream(line, max_frames=frames, temperature=args.temperature, reference_wav=reference_wav))
             if not chunks:
                 raise RuntimeError('No narration generated')
             if narration:
@@ -303,7 +305,7 @@ def main():
         print(f'Saved narration: {output}; intelligibility still requires listening evaluation')
     else:
         if not args.text:
-            parser.error('speak requires --text')
+            parser.error(f'{args.command} requires --text')
         if not math.isfinite(args.max_seconds) or args.max_seconds <= 0:
             parser.error('max-seconds must be finite and positive')
         frames = args.max_frames if args.max_frames is not None else min(
@@ -311,13 +313,25 @@ def main():
             model.config.max_seq_len-len(model.tokenizer.encode(args.text))-1)
         if frames <= 0:
             raise ValueError('Speech text or output duration exceeds context')
-        chunks = list(model.stream(args.text, max_frames=frames, temperature=args.temperature))
+        reference_wav = None
+        if args.reference:
+            reference_wav = read_audio(args.reference, model.config.sample_rate)
+        elif args.command == 'clone':
+            default_ref = Path('data/reference_voices/kullanici_sesi_raw.wav')
+            if not default_ref.exists():
+                default_ref = Path('data/reference_voices/kullanici_video_orijinal.wav')
+            if default_ref.exists():
+                reference_wav = read_audio(default_ref, model.config.sample_rate)
+            else:
+                parser.error('clone command requires --reference audio file')
+        chunks = list(model.stream(args.text, max_frames=frames, temperature=args.temperature, reference_wav=reference_wav))
         if not chunks:
             raise RuntimeError('No audio generated')
-        output = args.output or Path('data/native_output.wav')
+        output = args.output or (Path('data/cloned_output.wav') if args.command == 'clone' else Path('data/native_output.wav'))
         output.parent.mkdir(parents=True, exist_ok=True)
         sf.write(output, torch.cat(chunks, -1).flatten().float().cpu().numpy(), model.config.sample_rate)
         print(f'Saved: {output}; training counters do not certify intelligibility or quality')
+
 
 
 if __name__ == '__main__':

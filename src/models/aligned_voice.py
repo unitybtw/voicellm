@@ -10,6 +10,7 @@ from src.models.voice_unified import ByteTokenizer
 from src.models.monotonic_alignment import monotonic_path
 from src.text.phonemes import EnglishPhonemes
 from src.codec.linear_spectrum import LinearSpectrum
+from src.codec.pitch import pitch_labels
 from src.checkpoint import save_atomic
 
 @dataclass
@@ -186,12 +187,28 @@ class AlignedVoiceModel(nn.Module):
     @torch.inference_mode()
     def stream(self,text,max_frames=500,temperature=0.,reference_wav=None,allow_untrained=False):
         if temperature!=0:raise ValueError('Aligned synthesis uses temperature 0')
-        if reference_wav is not None:raise ValueError('Public model does not use user references')
         if int(self.speech_steps)==0 and not allow_untrained:raise ValueError('Model not trained')
         if type(max_frames)!=int or max_frames<2:raise ValueError('At least two acoustic frames required')
+        ref_mean, ref_std, ref_median_f0 = None, None, None
+        if reference_wav is not None:
+            if not isinstance(reference_wav, torch.Tensor) or reference_wav.numel() < 1600 or not torch.isfinite(reference_wav).all():
+                raise ValueError('Invalid reference audio')
+            ref_wav = reference_wav.float().reshape(1, -1)
+            ref_spec = self.codec.spectrum(ref_wav).abs().clamp_min(1e-5).log().T
+            ref_mean = ref_spec.mean(0)
+            ref_std = ref_spec.std(0).clamp_min(0.2)
+            p_ref, v_ref = pitch_labels(ref_wav, self.config.n_fft, self.config.hop_length, self.config.sample_rate)
+            f0_ref = (p_ref * 0.5 + math.log(200.)).exp()
+            voiced = v_ref > 0.5
+            ref_median_f0 = float(f0_ref[voiced].median()) if voiced.any() else 200.0
         features,pitch,_=self.predict_acoustics(text)
         if features.shape[1]>max_frames:features,pitch=features[:,:max_frames],pitch[:,:max_frames]
-        wave=self.codec.decode_source_filter(features.clamp(-6,6),pitch)
+        if ref_median_f0 is not None:
+            base_f0 = (pitch[..., 0].clamp(-2.1, 1.4) * 0.5 + math.log(200.)).exp()
+            cloned_log_f0 = (base_f0 * (ref_median_f0 / 200.0)).log()
+            pitch = pitch.clone()
+            pitch[..., 0] = ((cloned_log_f0 - math.log(200.)) / 0.5).clamp(-2.1, 1.4)
+        wave=self.codec.decode_source_filter(features.clamp(-6,6),pitch,mean=ref_mean,std=ref_std)
         yield from wave.split(self.config.hop_length,dim=-1)
 
     def count_parameters(self):return sum(p.numel() for p in self.parameters())

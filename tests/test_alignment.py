@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import pytest
 from itertools import combinations
 from src.models.monotonic_alignment import monotonic_path
@@ -249,6 +250,18 @@ def test_aligned_voice_cli_speak_and_narrate(tmp_path, monkeypatch):
     assert sr2 == model.config.sample_rate and len(narrate_wav) > 0
     assert torch.isfinite(torch.tensor(narrate_wav)).all()
 
+    # Test CLI clone with reference
+    ref_path = tmp_path / 'ref.wav'
+    sf.write(ref_path, 0.05 * np.sin(2 * np.pi * 150 * np.arange(16000) / 16000), 16000)
+    clone_out = tmp_path / 'clone.wav'
+    monkeypatch.setattr(sys, 'argv', ['voice.py', 'clone', '--checkpoint', str(checkpoint),
+                                     '--text', 'Merhaba dünya.', '--reference', str(ref_path),
+                                     '--max-frames', '20', '--output', str(clone_out)])
+    main()
+    clone_wav, sr3 = sf.read(clone_out)
+    assert sr3 == model.config.sample_rate and len(clone_wav) > 0
+    assert torch.isfinite(torch.tensor(clone_wav)).all()
+
 def test_source_filter_uses_dispersed_harmonic_phases_to_prevent_buzz():
     codec = LinearSpectrum()
     time = torch.arange(16000) / 16000
@@ -258,3 +271,17 @@ def test_source_filter_uses_dispersed_harmonic_phases_to_prevent_buzz():
     crest_factor = float(wave.abs().max() / wave.square().mean().sqrt().clamp_min(1e-6))
     assert crest_factor < 6.0
     assert torch.isfinite(wave).all()
+
+def test_aligned_voice_stream_with_speaker_reference():
+    model = small()
+    model.speech_steps.fill_(1)
+    # Generate 1s tone reference at 130 Hz (male pitch)
+    t = torch.arange(16000) / 16000
+    ref_audio = 0.05 * torch.sin(2 * 3.14159265 * 130 * t).unsqueeze(0)
+    chunks = list(model.stream('Hello world.', max_frames=30, reference_wav=ref_audio))
+    cloned_wave = torch.cat(chunks, -1)
+    assert cloned_wave.shape[-1] > 0 and torch.isfinite(cloned_wave).all()
+    # Invalid reference check
+    with pytest.raises(ValueError, match='Invalid reference audio'):
+        list(model.stream('Hello world.', max_frames=30, reference_wav=torch.zeros(1, 10)))
+

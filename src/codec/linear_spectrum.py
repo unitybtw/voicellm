@@ -45,12 +45,14 @@ class LinearSpectrum(SpectralCodec):
         return wave.clamp(-1,1).reshape(1,1,-1)
 
     @torch.no_grad()
-    def decode_source_filter(self,features,pitch):
+    def decode_source_filter(self,features,pitch,mean=None,std=None):
         """Coherent harmonic excitation plus filtered noise, driven by this model's heads."""
         if features.ndim!=3 or features.shape[0]!=1 or features.shape[1]<2 or features.shape[2]!=self.mean.numel() or pitch.shape!=(*features.shape[:2],2):
             raise ValueError('One matching spectrum/pitch sequence required')
         if not torch.isfinite(features).all() or not torch.isfinite(pitch).all():raise ValueError('Finite acoustic predictions required')
-        mag=(features.detach().float().cpu()[0]*self.std.float().cpu()+self.mean.float().cpu()).clamp(-12,8).exp()
+        target_mean = self.mean.float().cpu() if mean is None else mean.float().cpu()
+        target_std = self.std.float().cpu() if std is None else std.float().cpu()
+        mag=(features.detach().float().cpu()[0]*target_std+target_mean).clamp(-12,8).exp()
         pitch=pitch.detach().float().cpu()[0]
         frames=mag.shape[0];length=(frames-1)*self.hop_length
         f0=(pitch[:,0].clamp(-2.1,1.4)*.5+torch.tensor(200.).log()).exp()
@@ -104,4 +106,7 @@ class LinearSpectrum(SpectralCodec):
         if fade:
             ramp=torch.linspace(0,1,fade)
             wave[:fade]*=ramp;wave[-fade:]*=ramp.flip(0)
+        peak = wave.abs().max()
+        if peak > 0.95:
+            wave = wave * (0.95 / peak)
         return wave.clamp(-1,1).reshape(1,1,-1)
