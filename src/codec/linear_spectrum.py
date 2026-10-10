@@ -77,7 +77,9 @@ class LinearSpectrum(SpectralCodec):
         phase=torch.cumsum(sample_f0,0)*(6.2831853/self.sample_rate)
         sample_amplitude=interpolate(amplitudes)
         sample_amplitude=sample_amplitude*(sample_f0[:,None]*harmonics[None]<self.sample_rate/2)
-        harmonic=(torch.sin(phase[:,None]*harmonics[None])*sample_amplitude).sum(-1)
+        # Disperse harmonic phases to eliminate zero-phase impulse-train buzzer timbre.
+        schroeder=-math.pi*harmonics*(harmonics-1)/max(len(harmonics),1)
+        harmonic=(torch.sin(phase[:,None]*harmonics[None]+schroeder[None])*sample_amplitude).sum(-1)
         generator=torch.Generator().manual_seed(97)
         # Random phase alone cannot make a harmonic spectrum aperiodic. Smooth
         # its power over one pitch spacing before filtering the noise source.

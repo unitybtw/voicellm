@@ -43,7 +43,7 @@ def review(checkpoint,output,device='cpu'):
         'periodic_prior_mode':model.config.periodic_prior_mode,
         'speech_steps':int(model.speech_steps),'parameters':model.count_parameters(),'checkpoint_mib':checkpoint.stat().st_size/1048576,
         'external_weights':False,'user_audio_used':False,'dictionary_provenance':'data/pronunciation/provenance.json',
-        'phase_decoder':'Local harmonic source/filter with dynamic harmonic count, pitch-smoothed aperiodic noise, frame energy calibration and interpolated voiced/unvoiced class transitions',
+        'phase_decoder':'Local harmonic source/filter with dynamic harmonic count, Schroeder phase dispersion, pitch-smoothed aperiodic noise, frame energy calibration and interpolated voiced/unvoiced class transitions',
         'decoder_source_sha256':decoder_digest,
         'speech_ready':False,'human_listening_verified':False,'intelligibility_verified':False,'examples':examples,**results,
         'note':'Numerical spectrum and periodicity metrics do not establish correct words. The train sample is an explicit memorization sanity check. Synthesized audio never copies or mixes reference waveform.'}

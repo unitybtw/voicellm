@@ -248,3 +248,13 @@ def test_aligned_voice_cli_speak_and_narrate(tmp_path, monkeypatch):
     narrate_wav, sr2 = sf.read(narrate_out)
     assert sr2 == model.config.sample_rate and len(narrate_wav) > 0
     assert torch.isfinite(torch.tensor(narrate_wav)).all()
+
+def test_source_filter_uses_dispersed_harmonic_phases_to_prevent_buzz():
+    codec = LinearSpectrum()
+    time = torch.arange(16000) / 16000
+    features = codec.encode(.03 * torch.sin(2 * 3.14159265 * 200 * time))[0]
+    controls = torch.zeros(1, features.shape[1], 2); controls[..., 1] = 12
+    wave = codec.decode_source_filter(features, controls)
+    crest_factor = float(wave.abs().max() / wave.square().mean().sqrt().clamp_min(1e-6))
+    assert crest_factor < 6.0
+    assert torch.isfinite(wave).all()
