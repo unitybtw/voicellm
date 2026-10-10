@@ -39,7 +39,7 @@ def synchronize(device):
 
 def benchmark(model, device, output, iterations):
     model.eval()
-    text = 'Merhaba, ben VoiceLLM.'
+    text = 'Hello, I am VoiceLLM.'
     samples = []
     for iteration in range(iterations + 2):
         synchronize(device)
@@ -297,7 +297,7 @@ def main():
                 narration.append(chunks[0].new_zeros((*chunks[0].shape[:-1], round(model.config.sample_rate*.2))))
             narration.extend(chunks)
         result = torch.cat(narration, -1).flatten().float().cpu().numpy()
-        output = args.output or Path('data/native_samples/hikaye.wav')
+        output = args.output or Path('data/native_samples/story.wav')
         output.parent.mkdir(parents=True, exist_ok=True)
         sf.write(output, result, model.config.sample_rate)
         print(f'Saved narration: {output}; intelligibility still requires listening evaluation')
@@ -324,4 +324,4 @@ if __name__ == '__main__':
     try:
         main()
     except (ValueError, RuntimeError, FileNotFoundError) as error:
-        raise SystemExit(f'Hata: {error}') from None
+        raise SystemExit(f'Error: {error}') from None

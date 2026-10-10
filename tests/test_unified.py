@@ -19,12 +19,12 @@ def test_no_external_model_loaders_or_dependencies(monkeypatch):
         assert 'transformers' not in path.read_text()
         importlib.import_module('.'.join(path.with_suffix('').parts))
     model = tiny().eval()
-    assert len(list(model.stream('Merhaba', max_frames=3, allow_untrained=True))) == 3
+    assert len(list(model.stream('Hello', max_frames=3, allow_untrained=True))) == 3
 
 
-def test_byte_tokenizer_turkish_roundtrip():
+def test_byte_tokenizer_unicode_roundtrip():
     tokenizer = ByteTokenizer()
-    text = 'İstanbul, ışık, şüğöç! 2026 🎤'
+    text = 'English Unicode coverage: café, naïve! 2026 🎤'
     assert tokenizer.decode(tokenizer.encode(text)) == text
     with pytest.raises(ValueError):
         tokenizer.encode(' ')
@@ -67,7 +67,7 @@ def test_codec_and_speech_training_have_real_gradients():
     assert model.codec.encoder_in.weight.grad.abs().sum() > 0
     assert model.codec.decoder_out.weight.grad.abs().sum() > 0
     model.zero_grad(set_to_none=True)
-    speech_loss = model.speech_loss('Merhaba', wav)['loss']
+    speech_loss = model.speech_loss('Hello', wav)['loss']
     speech_loss.backward()
     assert torch.isfinite(speech_loss)
     assert model.backbone.text_embedding.weight.grad.abs().sum() > 0
@@ -143,12 +143,12 @@ def test_speak_cli_exports_audio_from_fp16_checkpoint(tmp_path, monkeypatch):
 def test_untrained_generation_and_interruption_guards():
     model = tiny().eval()
     with pytest.raises(RuntimeError, match='speech training'):
-        list(model.stream('Merhaba'))
-    assert list(model.stream('Merhaba', max_frames=0, allow_untrained=True)) == []
+        list(model.stream('Hello'))
+    assert list(model.stream('Hello', max_frames=0, allow_untrained=True)) == []
     with pytest.raises(ValueError):
-        list(model.stream('Merhaba', max_frames=500, allow_untrained=True))
+        list(model.stream('Hello', max_frames=500, allow_untrained=True))
     flag = {}
-    generator = model.stream('Merhaba', max_frames=3, interruption=flag, allow_untrained=True)
+    generator = model.stream('Hello', max_frames=3, interruption=flag, allow_untrained=True)
     next(generator)
     flag['interrupt'] = True
     assert list(generator) == []
@@ -166,14 +166,14 @@ def test_codec_does_not_look_into_future():
 
 def test_shared_language_objective_and_generation():
     model = tiny()
-    losses = model.text_loss('Merhaba dünya.')
+    losses = model.text_loss('Hello world.')
     losses['loss'].backward()
     assert model.backbone.text_embedding.weight.grad.abs().sum() > 0
     model.eval()
     with pytest.raises(RuntimeError, match='Language training'):
-        model.generate_text('Merhaba')
+        model.generate_text('Hello')
     model.text_steps.add_(1)
-    assert isinstance(model.generate_text('Merhaba', max_tokens=3), str)
+    assert isinstance(model.generate_text('Hello', max_tokens=3), str)
 
 
 def test_default_native_checkpoint_fits_target(tmp_path):
@@ -182,7 +182,7 @@ def test_default_native_checkpoint_fits_target(tmp_path):
     assert size / 1024**2 < 40
     loaded = UnifiedVoiceModel.load(tmp_path/'one.pt')
     assert next(loaded.parameters()).dtype == torch.float16
-    assert len(list(loaded.stream('Merhaba', max_frames=2, allow_untrained=True))) == 2
+    assert len(list(loaded.stream('Hello', max_frames=2, allow_untrained=True))) == 2
 
 
 def test_video_split_keeps_validation_separate(tmp_path):
@@ -325,8 +325,8 @@ def test_prepare_real_pairs_validates_before_writing(tmp_path):
     wav = tmp_path/'source.wav'
     sf.write(wav, np.zeros(16000), 16000)
     labels = tmp_path/'labels.jsonl'
-    rows = [{'start': 0., 'end': .2, 'text': 'Merhaba.', 'source': 'human_recording'},
-            {'start': .8, 'end': 1., 'text': 'Görüşürüz.', 'source': 'human_recording'}]
+    rows = [{'start': 0., 'end': .2, 'text': 'Hello.', 'source': 'human_recording'},
+            {'start': .8, 'end': 1., 'text': 'Goodbye.', 'source': 'human_recording'}]
     labels.write_text(''.join(json.dumps(row)+'\n' for row in rows))
     records = prepare(wav, labels, tmp_path/'pairs', checkpoint)
     assert len(records['train']) == len(records['validation']) == 1

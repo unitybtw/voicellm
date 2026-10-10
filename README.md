@@ -1,12 +1,12 @@
-# VoiceLLM — yerel konuşma modeli geliştirme
+# VoiceLLM — local speech synthesis research
 
-Experimental local speech synthesis research in PyTorch. Trained from scratch using public human recordings, without pretrained model weights or cloud inference. **Intelligible speech is not yet validated.** This is a research code release, not a finished voice assistant.
+Experimental speech synthesis in PyTorch, trained from scratch on public human recordings. No pretrained model weights, distillation, or cloud inference are used. **Intelligible speech has not been validated.** This is research code, not a finished voice assistant.
 
-## Açık kaynak sürümü ve kurulum
+## Installation
 
-Kaynak kod MIT lisanslıdır; CMU telaffuz sözlüğünün ayrı lisansı `data/pronunciation/LICENSE` içinde korunur. Kişisel ses/video kayıtları, eğitim verileri, model/optimizer ağırlıkları ve yerel deney raporları bu repoda dağıtılmaz. Aşağıdaki geliştirme geçmişindeki `reports/` bağlantıları yerel deney dosyalarıdır; temiz klonda bulunmaz. Henüz indirilebilir, doğrulanmış bir checkpoint yayımlanmamıştır.
+The source code is MIT licensed. The CMU pronunciation dictionary retains its separate license in `data/pronunciation/LICENSE`. Personal recordings, training datasets, checkpoints, optimizer states, and local experiment reports are excluded from Git. No validated downloadable checkpoint has been released. References to `reports/` below describe local artifacts that are absent from a clean clone.
 
-Python 3.11+ önerilir. Komutları repo kökünde çalıştırın:
+Python 3.11 or newer is recommended. Run commands from the repository root:
 
 ```bash
 git clone https://github.com/unitybtw/voicellm.git
@@ -17,7 +17,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-Testler indirilen eğitim verisi veya hazır checkpoint gerektirmez. Eğitim için resmi LJSpeech arşivini ayrıca indirin; birkaç GB disk alanı ve ciddi hesaplama süresi gerekir:
+Tests require neither downloaded training recordings nor trained checkpoints. To start training, download the official [LJSpeech dataset](https://keithito.com/LJ-Speech-Dataset/) separately. Allow several gigabytes of storage and substantial compute time:
 
 ```bash
 python scripts/download_public.py
@@ -26,54 +26,57 @@ mkdir -p models/checkpoints reports
 python scripts/train_public.py --device cpu
 ```
 
-Apple Silicon üzerinde uygun PyTorch kurulumu ile `--device mps` kullanılabilir. İlk eğitim kalite koşullarını geçemezse aktif checkpoint oluşturulmaz. `train_spectral.py` ve `train_aligned.py` doğrulanmış yerel checkpoint ve ona ait metadata gerektirir; temiz klonda doğrudan çalışmaz. Eğitim komutlarının tamamlanması anlaşılır konuşmayı garanti etmez.
+Apple Silicon systems with a compatible PyTorch installation can use `--device mps`. The initial training pipeline creates an active checkpoint only when its acceptance conditions pass. `train_spectral.py` and `train_aligned.py` require an existing verified local checkpoint and matching metadata; they do not run directly from a clean clone. Completing training does not establish intelligible speech.
 
-Katkı için [CONTRIBUTING.md](CONTRIBUTING.md), veri/lisans bilgileri için [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) dosyalarına bakın.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for data provenance and licensing.
 
-Dış model ağırlığı, distilasyon veya bulut modeli kullanılmaz. Kullanıcının videosu/sesi artık eğitime dahil edilmez. İnsan kayıtları ve eşleşmiş İngilizce metinler [LJSpeech](https://keithito.com/LJ-Speech-Dataset/) resmi kaynağından alınır.
+## Quality status
 
-## Kalite durumu
+The latest user evaluation reported noise rather than intelligible speech. Nonzero output, lower spectral error, increased periodicity, and passing code tests do not establish speech quality. `speech_ready=false`.
 
-**Kullanıcı son spektral örnekte de gürültü duyduğunu bildirdi. Anlaşılır konuşma başarısı doğrulanmadı.** Çıktının sessiz olmaması, düşen spektrum hatası, daha fazla periyodik kare veya başarılı kod testleri kalite kanıtı değildir. `speech_ready=false`.
+The canonical active checkpoint is `models/checkpoints/voice_unified.pt`. Development candidates are kept separately in `models/checkpoints/voice_aligned_candidate.pt`. Learning a small training subset is insufficient for promotion: validation performance must also improve and beat a constant-mean spectral baseline. The checkpoint's `.training.json` sidecar records its type, step count, and checksum.
 
-Kanonik aktif dosya `models/checkpoints/voice_unified.pt`. Henüz geçmeyen geliştirme adayı `models/checkpoints/voice_aligned_candidate.pt` içinde tutulur. Bir aday, küçük eğitim kümesini öğrenmesiyle aktif model yapılmaz; ayrı doğrulama kayıtlarında sabit ortalama tahminini de geçmelidir. Aktif dosyanın türü/sayacı/hash'i `.training.json` yanında kayıtlıdır.
+Training uses publisher-paired English recordings and transcripts from LJSpeech. Personal voice/video recordings are excluded from the current training pipeline. There is no validated support for Turkish speech, natural pronunciation, frontier quality, or superiority over competing models.
 
-## Son değişiklik
+## Model and synthesis
 
-Önceki ağ yalnızca toplam süreyi öğreniyordu; gerçek kayıtlardaki hızlı ses değişimlerinin yaklaşık %1–2'sini üretiyordu. Yeni tek ağ fonem bağlamını, her fonemin süresini, tam FFT spektrumunu, perdeyi ve sesli/sessiz olasılığını birlikte öğrenir. Çıktı önceki ses karesini tekrar tekrar geri beslemez.
+One native network learns phoneme context, phoneme durations, full FFT spectra, pitch, and voicing. It avoids repeatedly feeding the previous acoustic frame back into generation. The aligned network has 14,670,213 parameters; a local FP16 checkpoint is approximately 28.02 MiB. These figures describe size, not quality.
 
-İngilizce fonemler [CMU telaffuz sözlüğü](https://github.com/cmusphinx/cmudict) ile belirlenir. Bu insan telaffuz verisidir, model ağırlığı değildir. İndirilen commit, dosya hash'leri ve [lisans](https://github.com/cmusphinx/cmudict/blob/master/LICENSE) `data/pronunciation/` içindedir; sözlük dışı kelimeler açıkça işaretlenen harf okuma yöntemine düşer. Native checkpoint sözlük hash'ini ve fonem listesini doğrular.
+English phonemes come from the [CMU pronunciation dictionary](https://github.com/cmusphinx/cmudict), a pronunciation data resource rather than pretrained weights. Its pinned revision, checksums, provenance, and [license](https://github.com/cmusphinx/cmudict/blob/master/LICENSE) are retained in `data/pronunciation/`. Unknown words use an explicit spelling fallback. Checkpoint loading verifies the dictionary checksum and phoneme inventory. Typographic apostrophes are normalized so English contractions remain intact.
 
-Kendi dinamik programlama kodumuz gerçek hedef spektrum ve fonem özellikleri arasında sırayı koruyan eşleşme bulur. İnsan kelime zaman damgaları varmış gibi davranılmaz. Yöntem [monoton eşleştirme araştırmasından](https://arxiv.org/abs/2005.11129) yararlanır; başka modelin ağırlıkları veya dış hizalayıcı kullanılmaz. Eşleşmede kaba frekans özellikleri kullanılır; kısa ses birimlerinin atlanması engellenir.
+Native dynamic programming aligns phoneme features with real target spectra while preserving order. Coarse frequency features guide alignment, and short phonemes cannot be skipped. This follows the [monotonic alignment research approach](https://arxiv.org/abs/2005.11129) without importing an external aligner's code or weights. Inferred paths are not human timestamp annotations.
 
-Tam FFT büyüklüklerinden DSP yeniden yapım, dört gerçek kayıtta yaklaşık %0,17–0,35 büyüklük hatası verdi; önceki mel ters dönüşümü yaklaşık %12–15 hata verdi (`reports/decoder_reconstruction_comparison.json`). Bu yalnızca gerçek kaydın dönüştürülme testidir; TTS başarısı değildir.
+A local DSP source/filter decoder uses the network's pitch, voicing, and spectrum predictions. Its aperiodic branch uses filtered random-phase noise. There is no separate learned vocoder, and synthesized output never copies or mixes a training waveform. Ten-millisecond fades reduce edge discontinuities. Harmonic counts follow Nyquist and minimum pitch rather than a fixed 64-harmonic limit. Noise energy is calibrated to predicted frame RMS before equal-power mixing with the harmonic branch. Output is synthesized in blocks before chunks are yielded; this does not establish live streaming latency.
 
-Tek ağın perde ve sesli/sessiz tahminleri yerel harmonik kaynak/filtre sentezini sürer; aperiyodik kol filtreli rastgele faz gürültüsüdür. Öğrenilmiş ayrı bir vocoder yoktur. Kaynak waveform sentezlenir; eğitim WAV'ı kopyalanmaz veya karıştırılmaz. Başlangıç/bitişte 10 ms geçiş uygulanır ve Nyquist üstü harmonikler kesilir. Akış blok sentezidir; gerçek canlı gecikme iddiası yoktur.
+The experimental `periodic_prior_mode=confidence` suppresses harmonic spectral constraints when the voiced classifier is uncertain or predicts an unvoiced frame. Earlier checkpoints preserve their `probability` behavior. The new mode requires retraining; candidate selection compares against the source checkpoint in its original mode.
 
-Gürültü kolundaki fazların örtüşmesi enerji kaybettiriyordu; eski karışım düşük sesli olma olasılığında bile uğultu üretiyordu. Gürültü kolu tahmin edilen kare RMS'iyle kalibre edilir ve iki kol eşit güç geçişiyle karıştırılır. Harmonik sayısı artık Nyquist ve minimum perdeden hesaplanır; düşük perdede üst frekansları silen sabit 64 harmonik sınırı kaldırıldı. Bunlar kontrollü DSP regresyonlarıyla sınanır, anlaşılır konuşma kanıtı sayılmaz.
+Pitch and voicing learn from native autocorrelation labels derived from recordings. Spectral comb gradients are detached from the pitch head to avoid a fixed-pitch local minimum. Out-of-range monotonic correlation slopes are rejected as pitch peaks. These estimates are not human pitch annotations.
 
-`periodic_prior_mode=confidence` ağın düşük veya kararsız sesli tahminlerinde spektruma harmonik filtre dayatmasını engeller. Önceki checkpoint'ler `probability` modunda aynı spektrum davranışıyla yüklenir. Yeni mod yeniden eğitimle sınanır; seçim başlangıcı kaynak checkpoint'in kendi modundaki çıktısıdır.
+## Training and evaluation
 
-Yalnızca gerçek eşleşmeyle verilen süreye dayanmanın serbest üretimde hata yarattığı görülünce, modelin kendi süre tahminini kullanan diferansiyellenebilir üretim de ses kaybıyla eğitilir. Küçük küme tanı testlerinde, kendi eşleştirmelerimiz sabit tutularak değişen hedeflerin süre öğrenimini bozması ayrıca sınanır. `clock_mode=soft` bu davranışı checkpoint'e kaydeder; eski native modeller yüklenebilir.
+Development started with an explicit 16-record memorization check and expanded to 128 and 256 training recordings. Recent runs use 32 validation and 32 test recordings. Neither split supplies gradient training; test metrics do not select checkpoints. These are subsets of the available corpus, not evidence that the full dataset has been trained.
 
-Önceki geliştirme turlarında **6.400 gradyan adımı** denendi ve **5.600** sayaçlı aday seçildi. İlk 16 kayıt denemesi, 128 kayıt genişletmesi, serbest zamanlama eğitimi ve iki küçük küme tanı turu ayrı raporlanır. Ağ **14.670.213 parametre / yaklaşık 28,02 MiB**. Güncel adım, hash, test ve kalite durumu `reports/noise_development_latest.json` içinde tutulur. Genel konuşma eşiği geçmeyen aday aktif dosyaya taşınmaz.
+`clock_mode=soft` directly supervises synthesis using the model's own differentiable duration estimates. Duration training and inference use the same minimum frame count. Explicitly requested output lengths preserve every phoneme and allocate the exact number of frames. Cached alignment paths are validated for shape, type, endpoints, and consecutive phoneme coverage.
 
-Perde maskesinin gradyanı perde başlığını neredeyse sabit 200 Hz civarında tutuyordu. Bu yol ayrıldı; perde/sesli-sessiz başlıkları gerçek waveform etiketlerinden eğitilir. Aynı cümlede perde standart sapması yaklaşık **0,22 Hz → 47,56 Hz** oldu (`reports/pitch_lock_regression.json`). Etiket çıkarımında aralık sınırındaki monoton korelasyon, periyot zirvesi sayılmaz. Bu düzeltmeler telaffuz veya doğallık kanıtı değildir.
+Training includes frame energy alongside spectral, pitch, voicing, duration, and temporal-change losses. Candidate selection measures spectrum, duration, pitch, voicing, energy, and acoustic variation on validation data. A worse run cannot overwrite its verified starting candidate. Native checkpoints and optimizer files use atomic writes, and resume checks verify their matching checksums and step counts.
 
-## Eğitim ve denetim
-
-Önce 16 kısa kamu kaydında açıkça bir ezberleme/sanity testi yapıldı; sonra 128 ve 256 ayrı eğitim kaydına genişletildi. Son turlar 32 doğrulama ve 32 test kaydı kullanır. Doğrulama ve test kayıtları gradyan eğitiminde kullanılmaz; test sonuçları aday seçiminde kullanılmaz. Eğitim alt kümedir; tüm 24 saatin eğitildiği iddia edilmez. Her tur kaynak checkpoint hash'ini, kullanılan kayıtları, denenmiş/seçilmiş adımları ve gerçek ölçümleri raporlar. Başarısız adaylar aktif sayılmaz.
-
-Spektrum hatasına ek olarak gerçek kaydın kare enerjisi de eğitim kaybına dahildir; aşırı sessiz ortalama spektrum çözümünü önlemeyi amaçlar. Aday seçimi ayrı doğrulamada perde, sesli/sessiz ayrımı, süre, enerji ve kare değişimini birlikte ölçer. Başlangıç adayından daha kötü bir turun onu ezmesine izin verilmez. Süre eğitimindeki minimum kare sayısı üretimle aynıdır; sabit uzunluk isteyen üretim tam kare sayısını korur. Tipografik kesme işaretleri İngilizce kelimeleri yanlış bölmez.
+The following commands require verified local training artifacts:
 
 ```bash
-python3 scripts/train_aligned.py --steps 1600 --clips 16 --device mps
-# Doğrulanmış kendi geliştirme adayından ve hash/adımı eşleşen optimizer'dan devam:
+# Resume a native development candidate with its matching optimizer.
 python3 scripts/train_aligned.py --checkpoint models/checkpoints/voice_aligned_candidate.pt --steps 600 --clips 256 --min-seconds 1.5 --max-seconds 6 --soft-clock --confident-periodic-prior --device mps --lr .00005
 python3 scripts/review_aligned.py --checkpoint models/checkpoints/voice_aligned_candidate.pt
 python3 scripts/voice.py speak --checkpoint models/checkpoints/voice_aligned_candidate.pt --text "Hello world." --temperature 0
-python3 -m pytest -q
-python3 -m compileall -q src scripts tests
 ```
 
-Son raporlar `reports/aligned_training_latest.json`, `reports/generation_aligned_review.json` ve `reports/noise_development_latest.json`. Kod testleri dinamik programlamayı tam tarama optimumuyla, gerçek gradyanları, perde geri oluşturmayı, ses birimlerinin atlanmamasını, checkpoint kimliğini ve serbest zamanlama gradyanını doğrular. Türkçe konuşma, doğal telaffuz, frontier kalite veya rakiplere üstünlük henüz doğrulanmadı. Önceki deneyler `reports/SPECTRAL_POOLING_HISTORY.md` ve `reports/RAW_CODEC_HISTORY.md` içinde korunur.
+Reproducible code and DSP checks:
+
+```bash
+python3 -m pytest -q
+python3 -m compileall -q src scripts tests
+python3 scripts/check_source_filter.py --skip-public-examples
+```
+
+The DSP checks isolate energy and periodicity mechanics. Public-control reconstruction checks, when recordings are available, reconstruct measured spectra and are explicitly distinct from new-text synthesis. Numerical metrics do not verify pronunciation or intelligibility.
+
+Local run histories record source checksums, training records, attempted and selected steps, configuration changes, and measurements. Current local reports include `reports/aligned_training_latest.json`, `reports/generation_aligned_review.json`, `reports/dsp_regression_comparison.json`, and `reports/noise_development_latest.json`.
