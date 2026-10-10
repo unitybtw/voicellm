@@ -10,7 +10,8 @@ from src.models.voice_unified import UnifiedVoiceModel
 from src.models.aligned_voice import AlignedVoiceModel
 from src.codec.pitch import pitch_labels
 from src.data.video_audio import file_sha256
-from src.checkpoint import save_atomic
+from src.checkpoint import write_json_atomic
+from src.training.aligned_state import TrainingOrder, optimizer_path_for, restore_optimizer, save_training_state, step_optimizer
 
 
 def select(split,count,min_seconds,max_seconds):
@@ -113,29 +114,29 @@ def run(args):
         print('Upgrade initial valid', {k:v for k,v in initial_valid.items() if k!='clips'},flush=True)
     optimizer=torch.optim.AdamW(model.parameters(),lr=args.lr)
     optimizer_path=Path('models/checkpoints/aligned_optimizer.pt')
+    saved_order=None
     if resume:
-        optimizer_source=optimizer_path if source_path==active else Path('models/checkpoints/aligned_candidate_optimizer.pt')
-        saved=torch.load(optimizer_source,map_location='cpu',weights_only=True)
-        if saved['checkpoint_sha256']!=sha or saved['step']!=int(model.speech_steps):raise ValueError('Aligned optimizer mismatch')
-        optimizer.load_state_dict(saved['optimizer'])
-        for state in optimizer.state.values():
-            for k,v in state.items():
-                if torch.is_tensor(v) and k!='step':state[k]=v.to(args.device)
-        for group in optimizer.param_groups:group['lr']=args.lr
+        optimizer_source=optimizer_path_for(source_path,meta,active)
+        saved_order=restore_optimizer(optimizer,source_path,optimizer_source,int(model.speech_steps),args.device,args.lr)
     start=int(model.speech_steps);best=selection_score(before_train,before_valid,args.clips) if resume else float('inf');selected_step=start;logs=[]
+    order=TrainingOrder([r['id'] for r in records],seed=103+start,state=saved_order)
+    initial_order=order.state_dict();exposures={r['id']:0 for r in records};selected_exposures=dict(exposures)
     candidate=Path('models/checkpoints/voice_aligned_candidate.pt');candidate_opt=Path('models/checkpoints/aligned_candidate_optimizer.pt')
     if resume:
         # Retain the verified starting model and its moments if this run never improves it.
-        if source_path.resolve()!=candidate.resolve():shutil.copy2(source_path,candidate);shutil.copy2(source_meta_path,Path(str(candidate)+'.training.json'))
+        shutil.copy2(optimizer_source,snapshot/optimizer_source.name)
+        if source_path.resolve()!=candidate.resolve():shutil.copy2(source_path,candidate)
         if optimizer_source.resolve()!=candidate_opt.resolve():shutil.copy2(optimizer_source,candidate_opt)
-        shutil.copy2(candidate_opt,snapshot/candidate_opt.name)
+        retained_meta={**meta,'optimizer_file':candidate_opt.name}
+        write_json_atomic(retained_meta,Path(str(candidate)+'.training.json'))
     executed_steps=0
+    latest_checkpoint=Path('models/checkpoints/voice_aligned_last_attempt.pt')
+    latest_optimizer=latest_checkpoint.with_suffix('.optimizer.pt')
     for step in range(args.steps):
-        row,target,pitch=pairs[step%len(pairs)];model.train();optimizer.zero_grad(set_to_none=True)
+        row,target,pitch=pairs[order.next_index()];exposures[row['id']]+=1;model.train();optimizer.zero_grad(set_to_none=True)
         losses=model.speech_loss(row['text'],target.to(args.device),pitch,guidance=max(.02,.2*(1-step/max(1,args.steps))),alignment_path=cached_paths.get(row['id']))
         loss=losses['loss']
-        if not torch.isfinite(loss):raise FloatingPointError('Nonfinite aligned objective')
-        loss.backward();torch.nn.utils.clip_grad_norm_(model.parameters(),1.);optimizer.step();model.speech_steps.add_(1)
+        step_optimizer(model,optimizer,loss)
         executed_steps=step+1
         if (step+1)%10==0 and args.device=='mps':torch.mps.empty_cache()
         if (step+1)%100==0 or step+1==args.steps:
@@ -145,11 +146,9 @@ def run(args):
             # Sanity before scale: prioritize actual free synthesis on known training text.
             score=selection_score(training,valid,args.clips)
             if score<best:
-                best=score;selected_step=int(model.speech_steps);model.save(candidate,fp16=True)
-                save_atomic({'optimizer':optimizer.state_dict(),'step':selected_step,'checkpoint_sha256':file_sha256(candidate)},candidate_opt)
-                Path(str(candidate)+'.training.json').write_text(json.dumps({'model_kind':model.model_kind,'checkpoint_sha256':file_sha256(candidate),
-                    'speech_steps':selected_step,'external_weights':False,'user_audio_used':False,'development_candidate':True,
-                    'speech_ready':False,'transfer':transfer},indent=2)+'\n')
+                best=score;selected_step=int(model.speech_steps);selected_exposures=dict(exposures)
+                save_training_state(model,optimizer,candidate,candidate_opt,transfer,order)
+            save_training_state(model,optimizer,latest_checkpoint,latest_optimizer,transfer,order,kind='attempt')
             if args.sanity_only and training['free_mse']<.2 and training['duration_error']<.05 and training['delta_ratio']>.15:
                 print('Free synthesis sanity threshold reached; stopping this small-set test',flush=True)
                 break
@@ -173,10 +172,14 @@ def run(args):
     report['clock_mode']=selected.config.clock_mode
     report['periodic_prior_mode']=selected.config.periodic_prior_mode
     report['fixed_alignment_paths']={key:value.tolist() for key,value in cached_paths.items()}
-    report['selected_training_exposures']={r['id']:sum(1 for i in range(selected_step-start) if i%len(records)==j) for j,r in enumerate(records)}
-    latest_checkpoint=Path('models/checkpoints/voice_aligned_last_attempt.pt')
-    model.save(latest_checkpoint,fp16=True)
+    report['selected_training_exposures']=selected_exposures
+    report['attempted_training_exposures']=exposures
+    report['training_order_before']=initial_order
+    report['training_order_restored']=order.restored
+    report['training_order_after']=order.state_dict()
     report['last_attempt_checkpoint_sha256']=file_sha256(latest_checkpoint)
+    report['last_attempt_optimizer']=str(latest_optimizer.resolve())
+    report['last_attempt_resumable']=True
     for name,row in [('sanity',records[0]),('unseen',validation[0])]:
         wave=torch.cat(list(selected.stream(row['text'],max_frames=600)),-1).flatten().float().numpy()
         audio=Path('reports')/('aligned_'+name+'.wav');sf.write(audio,wave,16000)
@@ -184,13 +187,13 @@ def run(args):
     sf.write('reports/aligned_dsp_reference.wav',selected.codec.decode(pairs[0][1]).flatten().numpy(),16000)
     if accepted:
         archive=Path('archive/checkpoints')/('before_alignment_'+stamp);archive.mkdir(parents=True)
-        for path in (active,meta_path,Path('models/checkpoints/spectral_optimizer.pt')):
+        for path in (active,meta_path,Path('models/checkpoints/spectral_optimizer.pt'),optimizer_path):
             if path.exists():shutil.copy2(path,archive/path.name)
         shutil.copy2(candidate,active);shutil.copy2(candidate_opt,optimizer_path)
         report['checkpoint_sha256']=file_sha256(active)
-        meta_path.write_text(json.dumps({'stage':'speech','model_kind':selected.model_kind,'speech_steps':selected_step,'codec_steps':0,
+        write_json_atomic({'stage':'speech','model_kind':selected.model_kind,'speech_steps':selected_step,'codec_steps':0,
             'external_weights':False,'user_audio_used':False,'checkpoint_sha256':report['checkpoint_sha256'],'training_report':str(output),
-            'speech_ready':False,'intelligibility_verified':False,'transfer':transfer},indent=2)+'\n')
+            'optimizer_file':optimizer_path.name,'speech_ready':False,'intelligibility_verified':False,'transfer':transfer},meta_path)
     output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(report,indent=2)+'\n')
     Path('reports/aligned_training_latest.json').write_text(json.dumps(report,indent=2)+'\n')
     print('Saved',output,'accepted',accepted,flush=True)

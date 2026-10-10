@@ -60,6 +60,8 @@ Development started with an explicit 16-record memorization check and expanded t
 
 Training includes frame energy alongside spectral, pitch, voicing, duration, and temporal-change losses. Candidate selection measures spectrum, duration, pitch, voicing, energy, and acoustic variation on validation data. A worse run cannot overwrite its verified starting candidate. Native checkpoints and optimizer files use atomic writes, and resume checks verify their matching checksums and step counts.
 
+Every evaluation interval (100 steps), and the final step, saves a resumable last-attempt checkpoint with its matching optimizer and metadata, even when it is not selected or promoted. This limits lost work after interruptions without treating an experiment as accepted speech. Nonfinite losses or gradients cannot update weights, optimizer moments, or the successful-step counter. Training records are shuffled once per epoch; the saved order and cursor continue across resumes with the same record subset. Changing the subset starts a fresh, explicitly reported order. Metadata names the matching sibling optimizer file, so absolute checkpoint paths and archived training states can be resumed safely.
+
 The following commands require verified local training artifacts:
 
 ```bash
@@ -67,6 +69,8 @@ The following commands require verified local training artifacts:
 python3 scripts/train_aligned.py --checkpoint models/checkpoints/voice_aligned_candidate.pt --steps 600 --clips 256 --min-seconds 1.5 --max-seconds 6 --soft-clock --confident-periodic-prior --device mps --lr .00005
 python3 scripts/review_aligned.py --checkpoint models/checkpoints/voice_aligned_candidate.pt
 python3 scripts/voice.py speak --checkpoint models/checkpoints/voice_aligned_candidate.pt --text "Hello world." --temperature 0
+# Continue a resumable experimental last attempt created by the updated trainer.
+python3 scripts/train_aligned.py --checkpoint models/checkpoints/voice_aligned_last_attempt.pt --steps 600 --clips 256 --min-seconds 1.5 --max-seconds 6 --soft-clock --device mps --lr .00005
 ```
 
 Reproducible code and DSP checks:
