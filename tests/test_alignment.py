@@ -222,3 +222,29 @@ def test_noise_source_does_not_inherit_harmonic_lines_when_voicing_is_low(probab
     assert voiced[:,4:-4].mean()<.1
     ratio=float(result.square().mean().sqrt()/reference.square().mean().sqrt())
     assert .8<ratio<1.2
+
+def test_aligned_voice_cli_speak_and_narrate(tmp_path, monkeypatch):
+    import sys
+    import soundfile as sf
+    from scripts.voice import main
+    model = small()
+    model.speech_steps.fill_(1)
+    checkpoint = tmp_path / 'aligned.pt'
+    model.save(checkpoint, fp16=True)
+    speak_out = tmp_path / 'speak.wav'
+    monkeypatch.setattr(sys, 'argv', ['voice.py', 'speak', '--checkpoint', str(checkpoint),
+                                     '--text', 'Hello world.', '--max-frames', '20', '--output', str(speak_out)])
+    main()
+    wav, sr = sf.read(speak_out)
+    assert sr == model.config.sample_rate and len(wav) > 0
+    assert torch.isfinite(torch.tensor(wav)).all()
+
+    story = tmp_path / 'story.txt'
+    story.write_text('First sentence.\nSecond sentence.\n')
+    narrate_out = tmp_path / 'narrate.wav'
+    monkeypatch.setattr(sys, 'argv', ['voice.py', 'narrate', '--checkpoint', str(checkpoint),
+                                     '--text-file', str(story), '--output', str(narrate_out)])
+    main()
+    narrate_wav, sr2 = sf.read(narrate_out)
+    assert sr2 == model.config.sample_rate and len(narrate_wav) > 0
+    assert torch.isfinite(torch.tensor(narrate_wav)).all()
