@@ -12,13 +12,16 @@ from functools import lru_cache
 
 ROOT = Path(__file__).resolve().parents[2] / 'data/pronunciation'
 
-TURKISH_LETTER_MAP = {
-    'a': 'AA1', 'b': 'B', 'c': 'JH', 'ç': 'CH', 'd': 'D',
-    'e': 'EH1', 'f': 'F', 'g': 'G', 'h': 'HH', 'ı': 'IH1',
-    'i': 'IY1', 'j': 'ZH', 'k': 'K', 'l': 'L', 'm': 'M',
-    'n': 'N', 'o': 'AO1', 'ö': 'ER1', 'p': 'P', 'r': 'R',
-    's': 'S', 'ş': 'SH', 't': 'T', 'u': 'UW1', 'ü': 'UW1',
-    'v': 'V', 'y': 'Y', 'z': 'Z'
+TURKISH_VOWELS = {
+    'a': 'AA', 'e': 'EH', 'ı': 'IH', 'i': 'IY',
+    'o': 'AO', 'ö': 'ER', 'u': 'UW', 'ü': 'UW'
+}
+
+TURKISH_CONSONANTS = {
+    'b': 'B', 'c': 'JH', 'ç': 'CH', 'd': 'D', 'f': 'F',
+    'g': 'G', 'h': 'HH', 'j': 'ZH', 'k': 'K', 'l': 'L',
+    'm': 'M', 'n': 'N', 'p': 'P', 'r': 'R', 's': 'S',
+    'ş': 'SH', 't': 'T', 'v': 'V', 'y': 'Y', 'z': 'Z'
 }
 
 FRONT_VOWELS = set('eiöü')
@@ -104,13 +107,18 @@ def normalize_turkish_text(text: str) -> str:
 def turkish_word_to_phones(word: str) -> list[str]:
     """Converts a normalized Turkish word into phonetic symbols.
 
-    Applies soft-g ('ğ') vowel lengthening and glide rules, as well as
-    consonant gemination.
+    Applies natural Turkish syllable stress (penult unstressed '0', ultima stressed '1'),
+    soft-g ('ğ') vowel lengthening and glide rules, as well as consonant gemination.
     """
     chars = list(word)
+    vowel_indices = [i for i, ch in enumerate(chars) if ch in ALL_VOWELS]
+    last_vowel_idx = vowel_indices[-1] if vowel_indices else -1
     phones = []
     for i, ch in enumerate(chars):
-        if ch == 'ğ':
+        if ch in ALL_VOWELS:
+            stress = '1' if i == last_vowel_idx else '0'
+            phones.append(TURKISH_VOWELS[ch] + stress)
+        elif ch == 'ğ':
             # Yumuşak G: lengthens previous vowel or functions as palatal glide
             prev_vowel = None
             for j in range(i - 1, -1, -1):
@@ -126,13 +134,13 @@ def turkish_word_to_phones(word: str) -> list[str]:
                 if next_vowel in FRONT_VOWELS:
                     phones.append('Y')
                 else:
-                    phones.append(TURKISH_LETTER_MAP[prev_vowel])
+                    phones.append(TURKISH_VOWELS[prev_vowel] + '1')
             elif prev_vowel in BACK_VOWELS:
-                phones.append(TURKISH_LETTER_MAP[prev_vowel])
+                phones.append(TURKISH_VOWELS[prev_vowel] + '1')
             else:
                 phones.append('Y')
-        elif ch in TURKISH_LETTER_MAP:
-            phones.append(TURKISH_LETTER_MAP[ch])
+        elif ch in TURKISH_CONSONANTS:
+            phones.append(TURKISH_CONSONANTS[ch])
     return phones
 
 

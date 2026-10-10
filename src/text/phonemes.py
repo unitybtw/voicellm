@@ -19,14 +19,17 @@ def lexicon():
     return dictionary
 
 def is_turkish_text(text: str) -> bool:
-    """Detects whether text contains Turkish characters or common Turkish words."""
+    """Accurately detects whether text is Turkish or English."""
     if re.search(r'[çğışöüÇĞİŞÖÜ]', text):
         return True
-    common_tr = {'ve', 'bir', 'bu', 'da', 'de', 'ne', 'için', 'çok', 'ama', 'ben', 'sen', 'biz', 'siz',
-                 'evet', 'hayır', 'merhaba', 'selam', 'nasılsın', 'günaydın', 'nasıl', 'iyi', 'kötü',
-                 'teşekkür', 'ederim', 'görüşürüz', 'güzel', 'ses', 'sesi', 'model', 'tamam', 'lütfen'}
-    words = set(re.findall(r"[a-zA-ZçğışöüÇĞİŞÖÜ]+", text.lower()))
-    return len(words & common_tr) > 0
+    words = re.findall(r"[a-zA-Z]+(?:'[a-zA-Z]+)*", text.lower())
+    if not words:
+        return False
+    if any(re.search(r'[qwx]', w) for w in words):
+        return False
+    lex = lexicon()
+    in_english = sum(1 for w in words if w in lex)
+    return (in_english / len(words)) < 0.5
 
 class EnglishPhonemes:
     def __init__(self):
@@ -35,9 +38,10 @@ class EnglishPhonemes:
         self.dictionary_sha256=hashlib.sha256((ROOT/'cmudict.dict').read_bytes()).hexdigest()
         self._turkish = TurkishPhonemes()
 
-    def encode_with_metadata(self,text):
+    def encode_with_metadata(self,text,lang=None):
         if not isinstance(text,str) or not text.strip():raise ValueError('Nonempty English text required')
-        if is_turkish_text(text):
+        is_tr = (lang == 'tr') or (lang != 'en' and is_turkish_text(text))
+        if is_tr:
             return self._turkish.encode_with_metadata(text)
         text=unicodedata.normalize('NFKC',text).translate(str.maketrans({'’':"'",'‘':"'",'ʼ':"'",'…':'.'}))
         units=['<sil>'];unknown=[]

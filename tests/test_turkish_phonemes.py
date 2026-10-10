@@ -24,18 +24,26 @@ def test_turkish_soft_g_rules():
     assert dag == ['D', 'AA1', 'AA1']
     # Front vowel glide
     deger = turkish_word_to_phones('değer')
-    assert deger == ['D', 'EH1', 'Y', 'EH1', 'R']
+    assert deger == ['D', 'EH0', 'Y', 'EH1', 'R']
 
 def test_turkish_phoneme_encoder_validity():
     tp = TurkishPhonemes()
     ids, meta = tp.encode_with_metadata('Merhaba, nasılsın?')
     assert meta['lang'] == 'tr'
     assert 'M' in meta['phones']
-    assert 'EH1' in meta['phones']
+    assert 'EH0' in meta['phones']
     assert 'N' in meta['phones']
     assert 'AA1' in meta['phones']
     assert meta['phones'][0] == '<sil>' and meta['phones'][-1] == '<sil>'
     assert len(ids) == len(meta['phones'])
+
+def test_turkish_syllable_stress():
+    # Polysyllabic stress: unstressed penult, stressed ultima
+    phones = turkish_word_to_phones('merhaba')
+    assert phones == ['M', 'EH0', 'R', 'HH', 'AA0', 'B', 'AA1']
+    # Monosyllabic stress: single vowel has stress 1
+    ben_phones = turkish_word_to_phones('ben')
+    assert ben_phones == ['B', 'EH1', 'N']
 
 def test_turkish_phoneme_symbols_match_cmu_inventory():
     tp = TurkishPhonemes()
@@ -52,4 +60,8 @@ def test_auto_routing_in_english_phonemes():
     _, meta_tr = ep.encode_with_metadata('Merhaba dünya')
     assert meta_tr.get('lang') == 'tr'
     assert 'M' in meta_tr['phones'] and 'D' in meta_tr['phones']
+    # ASCII Turkish sentence without special letters
+    _, meta_ascii = ep.encode_with_metadata('seni seviyorum')
+    assert meta_ascii.get('lang') == 'tr'
+    assert 'S' in meta_ascii['phones'] and 'V' in meta_ascii['phones']
 
