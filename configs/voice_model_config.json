@@ -1,0 +1,15 @@
+{
+  "sample_rate": 16000,
+  "hop_length": 80,
+  "codec_dim": 96,
+  "codebook_size": 256,
+  "codebooks": 24,
+  "hidden_size": 384,
+  "layers": 8,
+  "heads": 6,
+  "kv_heads": 2,
+  "intermediate_size": 1024,
+  "max_seq_len": 2048,
+  "gain_bins": 256,
+  "depth_hidden": 128
+}
