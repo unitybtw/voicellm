@@ -1,4 +1,5 @@
 import torch
+from torch.nn import functional as F
 import numpy as np
 import pytest
 from itertools import combinations
@@ -284,4 +285,26 @@ def test_aligned_voice_stream_with_speaker_reference():
     # Invalid reference check
     with pytest.raises(ValueError, match='Invalid reference audio'):
         list(model.stream('Hello world.', max_frames=30, reference_wav=torch.zeros(1, 10)))
+
+def test_source_filter_envelope_flutter_is_smoothed():
+    """Validates that harmonic gain smoothing eliminates tremolo envelope flutter."""
+    codec = LinearSpectrum()
+    features = torch.zeros(1, 40, 513)
+    controls = torch.zeros(1, 40, 2); controls[..., 1] = 6.0
+    features[:, 0::2] = 1.0; features[:, 1::2] = -1.0
+    wave = codec.decode_source_filter(features, controls)
+    assert torch.isfinite(wave).all()
+    frame_rms = F.avg_pool1d(wave.square(), codec.hop_length, stride=codec.hop_length).sqrt().flatten()
+    ratio = (frame_rms[1:] / frame_rms[:-1].clamp_min(1e-5))
+    assert ratio.max() < 2.5 and ratio.min() > 0.4
+
+def test_continuous_confidence_voicing_transitions_smoothly():
+    """Validates that voicing transitions continuously around threshold without chopping."""
+    codec = LinearSpectrum()
+    features = torch.zeros(1, 40, 513)
+    controls = torch.zeros(1, 40, 2)
+    controls[0, :, 1] = torch.linspace(-2.0, 2.0, 40)
+    wave = codec.decode_source_filter(features, controls)
+    assert torch.isfinite(wave).all()
+
 

@@ -123,11 +123,12 @@ class AlignedVoiceModel(nn.Module):
         phases=torch.stack((local,local.square(),globalpos,torch.sin(globalpos*6.2831853)),-1)
         return weights.to(encoded.dtype)@encoded+self.position(phases.to(encoded.dtype))
 
-    def predict_acoustics(self,text,frames=None,pad_to_multiple=1):
+    def predict_acoustics(self,text,frames=None,pad_to_multiple=1,clock_mode=None):
         encoded,logdur,_=self.encode_text(text)
+        mode = self.config.clock_mode if clock_mode is None else clock_mode
         if frames is not None and (type(frames)!=int or frames<encoded.shape[1] or frames>self.config.max_seq_len):
             raise ValueError('Invalid output duration')
-        if self.config.clock_mode=='soft':
+        if mode=='soft':
             if frames is None and 2*encoded.shape[1]>self.config.max_seq_len:raise ValueError('Phoneme durations exceed context')
             total=logdur.exp().clamp_min(2.).sum()
             length=min(self.config.max_seq_len,max(encoded.shape[1]*2,int(total.detach().round().item()))) if frames is None else frames
@@ -185,7 +186,7 @@ class AlignedVoiceModel(nn.Module):
         return {'loss':loss,'spectral':spectral,'energy':energy,'delta':delta,'prior':prior_loss,'duration':duration_loss,'pitch':pitch_loss,'free_clock':free_loss,'path':path.detach()}
 
     @torch.inference_mode()
-    def stream(self,text,max_frames=500,temperature=0.,reference_wav=None,allow_untrained=False):
+    def stream(self,text,max_frames=500,temperature=0.,reference_wav=None,allow_untrained=False,clock_mode='hard',sharpen_formants=0.35):
         if temperature!=0:raise ValueError('Aligned synthesis uses temperature 0')
         if int(self.speech_steps)==0 and not allow_untrained:raise ValueError('Model not trained')
         if type(max_frames)!=int or max_frames<2:raise ValueError('At least two acoustic frames required')
@@ -201,8 +202,12 @@ class AlignedVoiceModel(nn.Module):
             f0_ref = (p_ref * 0.5 + math.log(200.)).exp()
             voiced = v_ref > 0.5
             ref_median_f0 = float(f0_ref[voiced].median()) if voiced.any() else 200.0
-        features,pitch,_=self.predict_acoustics(text)
+        features,pitch,_=self.predict_acoustics(text,clock_mode=clock_mode)
         if features.shape[1]>max_frames:features,pitch=features[:,:max_frames],pitch[:,:max_frames]
+        if sharpen_formants>0:
+            pad=7
+            smooth=F.avg_pool1d(F.pad(features,(pad,pad),mode='replicate'),15,stride=1)
+            features=features+sharpen_formants*(features-smooth)
         if ref_median_f0 is not None:
             base_f0 = (pitch[..., 0].clamp(-2.1, 1.4) * 0.5 + math.log(200.)).exp()
             cloned_log_f0 = (base_f0 * (ref_median_f0 / 200.0)).log()

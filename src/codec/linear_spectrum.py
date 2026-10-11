@@ -56,9 +56,8 @@ class LinearSpectrum(SpectralCodec):
         pitch=pitch.detach().float().cpu()[0]
         frames=mag.shape[0];length=(frames-1)*self.hop_length
         f0=(pitch[:,0].clamp(-2.1,1.4)*.5+torch.tensor(200.).log()).exp()
-        # This head predicts a binary class probability, not harmonic energy.
-        # Interpolation below smooths class changes over one acoustic hop.
-        voice=(pitch[:,1]>=0).float()
+        # Smooth continuous confidence voicing prevents abrupt harmonic generator toggling.
+        voice=(2*pitch[:,1].sigmoid()-1).clamp_min(0)
         # A fixed 64-harmonic cap discarded audible upper bands at low pitches.
         harmonics=torch.arange(1,math.ceil(self.sample_rate/2/float(f0.min()))+1).float()
         frequencies=f0[:,None]*harmonics[None]
@@ -66,10 +65,16 @@ class LinearSpectrum(SpectralCodec):
         left=bins.floor().long().clamp(0,mag.shape[1]-2);fraction=bins-left
         envelope=F.max_pool1d(mag[:,None],kernel_size=5,stride=1,padding=2)[:,0]
         amplitudes=(envelope.gather(1,left)*(1-fraction)+envelope.gather(1,left+1)*fraction)*2/self.window.float().cpu().sum()
-        amplitudes=amplitudes*(frequencies<self.sample_rate/2)
+        # Smooth Nyquist roll-off taper avoids sudden spectral step discontinuities.
+        taper=((self.sample_rate/2-frequencies)/800).clamp(0,1)
+        amplitudes=amplitudes*taper
         target_rms=(mag.square().sum(-1)*2).sqrt()/self.n_fft/(.375**.5)
         harmonic_rms=(amplitudes.square().sum(-1)*.5).sqrt().clamp_min(1e-6)
-        amplitudes=amplitudes*(target_rms/harmonic_rms).clamp(.2,3)[:,None]
+        gain=(target_rms/harmonic_rms).clamp(.4,2.5)
+        if frames>4:
+            kernel=torch.tensor([0.1,0.2,0.4,0.2,0.1],device=mag.device,dtype=mag.dtype).view(1,1,5)
+            gain=F.conv1d(F.pad(gain.view(1,1,-1),(2,2),mode='replicate'),kernel).view(-1)
+        amplitudes=amplitudes*gain[:,None]
         def interpolate(values):
             # STFT frame centers are hop-spaced; match those times rather than scaling T to N.
             positions=torch.arange(length)/self.hop_length
@@ -78,7 +83,8 @@ class LinearSpectrum(SpectralCodec):
         sample_f0=interpolate(f0)
         phase=torch.cumsum(sample_f0,0)*(6.2831853/self.sample_rate)
         sample_amplitude=interpolate(amplitudes)
-        sample_amplitude=sample_amplitude*(sample_f0[:,None]*harmonics[None]<self.sample_rate/2)
+        sample_freqs=sample_f0[:,None]*harmonics[None]
+        sample_amplitude=sample_amplitude*((self.sample_rate/2-sample_freqs)/800).clamp(0,1)
         # Disperse harmonic phases to eliminate zero-phase impulse-train buzzer timbre.
         schroeder=-math.pi*harmonics*(harmonics-1)/max(len(harmonics),1)
         harmonic=(torch.sin(phase[:,None]*harmonics[None]+schroeder[None])*sample_amplitude).sum(-1)
@@ -99,7 +105,11 @@ class LinearSpectrum(SpectralCodec):
         # predicted frame energy before mixing; otherwise even q=.2 becomes a buzz.
         noise_rms=F.avg_pool1d(noise.square()[None,None],self.n_fft,self.hop_length,
             padding=self.n_fft//2,count_include_pad=False).flatten().clamp_min(1e-16).sqrt()
-        noise=noise*interpolate((target_rms/noise_rms).clamp(.25,4.))
+        noise_gain=(target_rms/noise_rms).clamp(.3,3.)
+        if noise_gain.numel()>4:
+            kernel=torch.tensor([0.1,0.2,0.4,0.2,0.1],device=noise_gain.device,dtype=noise_gain.dtype).view(1,1,5)
+            noise_gain=F.conv1d(F.pad(noise_gain.view(1,1,-1),(2,2),mode='replicate'),kernel).view(-1)
+        noise=noise*interpolate(noise_gain)
         sample_voice=interpolate(voice).clamp(0,1)
         wave=harmonic*sample_voice.sqrt()+noise*(1-sample_voice).sqrt()
         fade=min(self.sample_rate//100,length//2)
