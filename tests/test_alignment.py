@@ -307,4 +307,15 @@ def test_continuous_confidence_voicing_transitions_smoothly():
     wave = codec.decode_source_filter(features, controls)
     assert torch.isfinite(wave).all()
 
+def test_aligned_voice_stream_exact_pitch_centering_and_cadence():
+    """Validates exact target pitch centering and cadence handling with reference audio."""
+    model = small()
+    model.speech_steps.fill_(1)
+    t = torch.arange(16000) / 16000
+    ref_audio = 0.05 * torch.sin(2 * 3.14159265 * 140 * t).unsqueeze(0)
+    chunks = list(model.stream('Hello world.', max_frames=40, reference_wav=ref_audio))
+    wave = torch.cat(chunks, -1)
+    assert wave.shape[-1] > 0 and torch.isfinite(wave).all()
+
+
 

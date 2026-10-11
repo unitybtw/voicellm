@@ -196,23 +196,41 @@ class AlignedVoiceModel(nn.Module):
                 raise ValueError('Invalid reference audio')
             ref_wav = reference_wav.float().reshape(1, -1)
             ref_spec = self.codec.spectrum(ref_wav).abs().clamp_min(1e-5).log().T
-            ref_mean = ref_spec.mean(0)
-            ref_std = ref_spec.std(0).clamp_min(0.2)
             p_ref, v_ref = pitch_labels(ref_wav, self.config.n_fft, self.config.hop_length, self.config.sample_rate)
+            min_frames = min(ref_spec.shape[0], v_ref.shape[1])
+            ref_spec_sub = ref_spec[:min_frames]
+            v_sub = v_ref[0, :min_frames]
+            energy = ref_spec_sub.mean(-1)
+            speech_mask = (v_sub > 0.4) | (energy > -5.0)
+            speech_spec = ref_spec_sub[speech_mask] if speech_mask.sum() > 8 else ref_spec_sub
+            ref_mean = speech_spec.mean(0)
+            ref_std = speech_spec.std(0).clamp_min(0.25)
             f0_ref = (p_ref * 0.5 + math.log(200.)).exp()
-            voiced = v_ref > 0.5
-            ref_median_f0 = float(f0_ref[voiced].median()) if voiced.any() else 200.0
+            ref_median_f0 = float(f0_ref[v_ref > 0.5].median()) if (v_ref > 0.5).any() else 200.0
         features,pitch,_=self.predict_acoustics(text,clock_mode=clock_mode)
         if features.shape[1]>max_frames:features,pitch=features[:,:max_frames],pitch[:,:max_frames]
+        if ref_median_f0 is not None:
+            base_f0 = (pitch[..., 0].clamp(-2.1, 1.4) * 0.5 + math.log(200.)).exp()
+            voicing = (2 * pitch[..., 1].sigmoid() - 1).clamp_min(0)
+            voiced = (voicing[0] > 0.2)
+            base_median_f0 = float(base_f0[0][voiced].median().detach()) if voiced.any() else 200.0
+            cloned_f0 = base_f0 * (ref_median_f0 / base_median_f0)
+            # Remove base comb filter so vocal tract formants are pure and match target pitch
+            frequencies = torch.linspace(0, self.config.sample_rate / 2, features.shape[-1], device=features.device)
+            comb_base = (.08 + .92 * torch.exp(-8 * torch.sin(math.pi * frequencies[None, None] / base_f0[..., None]).square())).log()
+            adj_base = comb_base * voicing[..., None] / self.codec.std.to(features.device).clamp_min(0.3)
+            features = features - adj_base
+            # Natural cadence: for declarative sentences, ensure gentle final fall
+            if text.rstrip().endswith(('.', '!')) and features.shape[1] > 12:
+                fall_len = min(15, features.shape[1] // 4)
+                fall = torch.linspace(1.0, 0.88, fall_len, device=cloned_f0.device)
+                cloned_f0[..., -fall_len:] *= fall
+            pitch = pitch.clone()
+            pitch[..., 0] = ((cloned_f0.log() - math.log(200.)) / 0.5).clamp(-2.1, 1.4)
         if sharpen_formants>0:
             pad=7
             smooth=F.avg_pool1d(F.pad(features,(pad,pad),mode='replicate'),15,stride=1)
             features=features+sharpen_formants*(features-smooth)
-        if ref_median_f0 is not None:
-            base_f0 = (pitch[..., 0].clamp(-2.1, 1.4) * 0.5 + math.log(200.)).exp()
-            cloned_log_f0 = (base_f0 * (ref_median_f0 / 200.0)).log()
-            pitch = pitch.clone()
-            pitch[..., 0] = ((cloned_log_f0 - math.log(200.)) / 0.5).clamp(-2.1, 1.4)
         wave=self.codec.decode_source_filter(features.clamp(-6,6),pitch,mean=ref_mean,std=ref_std)
         yield from wave.split(self.config.hop_length,dim=-1)
 
