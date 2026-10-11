@@ -117,6 +117,8 @@ def turkish_word_to_phones(word: str) -> list[str]:
     for i, ch in enumerate(chars):
         if ch in ALL_VOWELS:
             stress = '1' if i == last_vowel_idx else '0'
+            if ch == 'ü' and (i == 0 or (i > 0 and chars[i - 1] in ('g', 'k', 't', 'b', 'd', 's', 'l', 'm', 'n', 'z'))):
+                phones.append('Y')
             phones.append(TURKISH_VOWELS[ch] + stress)
         elif ch == 'ğ':
             # Yumuşak G: lengthens previous vowel or functions as palatal glide

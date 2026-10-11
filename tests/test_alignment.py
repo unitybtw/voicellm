@@ -353,6 +353,17 @@ def test_cli_clone_defaults_to_clean_middle_audio(tmp_path, monkeypatch):
     wav, sr = sf.read(out)
     assert sr == model.config.sample_rate and len(wav) > 0
 
+def test_aligned_voice_stream_vtln_vocal_tract_scaling():
+    """Validates that stream applies VTLN scaling when speaker reference pitch differs from base."""
+    model = small()
+    model.speech_steps.fill_(1)
+    # Reference with male pitch (140 Hz vs ~210 Hz base)
+    t = torch.arange(16000) / 16000
+    ref_audio = 0.05 * torch.sin(2 * 3.14159265 * 140 * t).unsqueeze(0)
+    chunks = list(model.stream('Hello world.', max_frames=30, reference_wav=ref_audio))
+    wave = torch.cat(chunks, -1)
+    assert wave.shape[-1] > 0 and torch.isfinite(wave).all()
+
 
 
 

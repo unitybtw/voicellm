@@ -186,7 +186,7 @@ class AlignedVoiceModel(nn.Module):
         return {'loss':loss,'spectral':spectral,'energy':energy,'delta':delta,'prior':prior_loss,'duration':duration_loss,'pitch':pitch_loss,'free_clock':free_loss,'path':path.detach()}
 
     @torch.inference_mode()
-    def stream(self,text,max_frames=500,temperature=0.,reference_wav=None,allow_untrained=False,clock_mode='hard',sharpen_formants=0.35):
+    def stream(self,text,max_frames=500,temperature=0.,reference_wav=None,allow_untrained=False,clock_mode='hard',sharpen_formants=0.0):
         if temperature!=0:raise ValueError('Aligned synthesis uses temperature 0')
         if int(self.speech_steps)==0 and not allow_untrained:raise ValueError('Model not trained')
         if type(max_frames)!=int or max_frames<2:raise ValueError('At least two acoustic frames required')
@@ -227,6 +227,14 @@ class AlignedVoiceModel(nn.Module):
                 cloned_f0[..., -fall_len:] *= fall
             pitch = pitch.clone()
             pitch[..., 0] = ((cloned_f0.log() - math.log(200.)) / 0.5).clamp(-2.1, 1.4)
+            # Vocal Tract Length Normalization (VTLN): warp formants to match speaker vocal tract
+            alpha = (ref_median_f0 / base_median_f0) ** (1/3)
+            alpha = max(0.82, min(1.15, alpha))
+            D = features.shape[-1]
+            src_bins = (torch.arange(D, device=features.device).float() / alpha).clamp(0, D - 1)
+            left = src_bins.floor().long().clamp(0, D - 2)
+            frac = src_bins - left
+            features = features[..., left] * (1 - frac) + features[..., left + 1] * frac
         if sharpen_formants>0:
             pad=7
             smooth=F.avg_pool1d(F.pad(features,(pad,pad),mode='replicate'),15,stride=1)
