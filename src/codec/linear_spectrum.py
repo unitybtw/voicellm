@@ -68,6 +68,14 @@ class LinearSpectrum(SpectralCodec):
         # Smooth Nyquist roll-off taper avoids sudden spectral step discontinuities.
         taper=((self.sample_rate/2-frequencies)/800).clamp(0,1)
         amplitudes=amplitudes*taper
+        # Attenuate sub-bass rumble (<250 Hz) and enhance vocal formant presence (1200-3500 Hz).
+        sub_mask=frequencies<250
+        sub_weight=torch.ones_like(frequencies)
+        sub_weight[sub_mask]=0.5+0.5*(frequencies[sub_mask]/250)
+        formant_boost=torch.ones_like(frequencies)
+        formant_boost[(frequencies>=1200)&(frequencies<3500)]=1.55
+        formant_boost[(frequencies>=3500)&(frequencies<7500)]=1.25
+        amplitudes=amplitudes*sub_weight*formant_boost
         target_rms=(mag.square().sum(-1)*2).sqrt()/self.n_fft/(.375**.5)
         harmonic_rms=(amplitudes.square().sum(-1)*.5).sqrt().clamp_min(1e-6)
         gain=(target_rms/harmonic_rms).clamp(.4,2.5)
@@ -111,7 +119,10 @@ class LinearSpectrum(SpectralCodec):
             noise_gain=F.conv1d(F.pad(noise_gain.view(1,1,-1),(2,2),mode='replicate'),kernel).view(-1)
         noise=noise*interpolate(noise_gain)
         sample_voice=interpolate(voice).clamp(0,1)
-        wave=harmonic*sample_voice.sqrt()+noise*(1-sample_voice).sqrt()
+        # Subtle glottal breathiness floor (HNR ~ 25 dB) gives natural human vocal cord texture.
+        eff_voice=sample_voice*0.97
+        eff_noise=(1-sample_voice)+sample_voice*0.03
+        wave=harmonic*eff_voice.sqrt()+noise*eff_noise.sqrt()
         fade=min(self.sample_rate//100,length//2)
         if fade:
             ramp=torch.linspace(0,1,fade)

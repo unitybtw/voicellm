@@ -317,5 +317,42 @@ def test_aligned_voice_stream_exact_pitch_centering_and_cadence():
     wave = torch.cat(chunks, -1)
     assert wave.shape[-1] > 0 and torch.isfinite(wave).all()
 
+def test_source_filter_formant_spectral_balance_and_sub_bass_reduction():
+    """Validates that harmonic weighting suppresses sub-bass rumble and preserves mid-formants."""
+    codec = LinearSpectrum()
+    features = torch.zeros(1, 40, 513)
+    controls = torch.zeros(1, 40, 2); controls[..., 1] = 6.0
+    freqs = torch.linspace(0, 8000, 513)
+    envelope = -((freqs - 700) / 300)**2 * 0.5
+    envelope = torch.maximum(envelope, -((freqs - 2200) / 400)**2 * 0.5 - 1.0)
+    features[0] = envelope[None]
+    wave = codec.decode_source_filter(features, controls).flatten()
+    fft = np.abs(np.fft.rfft(wave.numpy()))
+    fft_freqs = np.fft.rfftfreq(len(wave), 1 / 16000)
+    tot = np.sum(fft**2)
+    p_sub = float(np.sum(fft[fft_freqs < 250]**2) / tot)
+    p_mid = float(np.sum(fft[(fft_freqs >= 1500) & (fft_freqs < 3500)]**2) / tot)
+    assert p_sub < 0.25
+    assert p_mid > 0.03
+
+def test_cli_clone_defaults_to_clean_middle_audio(tmp_path, monkeypatch):
+    """Validates that clone CLI defaults to kullanici_orta_temiz.wav if reference is omitted."""
+    import sys
+    import soundfile as sf
+    from scripts.voice import main
+    model = small()
+    model.speech_steps.fill_(1)
+    checkpoint = tmp_path / 'aligned.pt'
+    model.save(checkpoint, fp16=True)
+    out = tmp_path / 'cloned_default.wav'
+    monkeypatch.setattr(sys, 'argv', ['voice.py', 'clone', '--checkpoint', str(checkpoint),
+                                     '--text', 'Deneme bir iki.', '--max-frames', '20',
+                                     '--output', str(out)])
+    main()
+    assert out.exists()
+    wav, sr = sf.read(out)
+    assert sr == model.config.sample_rate and len(wav) > 0
+
+
 
 

@@ -249,7 +249,16 @@ def main():
         return
     torch.manual_seed(args.seed)
     if args.command in ['speak', 'narrate', 'export', 'reconstruct', 'clone'] and not args.checkpoint:
-        parser.error(f'{args.command} requires --checkpoint with speech training')
+        for candidate in [
+            Path('models/checkpoints/voice_aligned_last_attempt.pt'),
+            Path('models/checkpoints/voice_aligned_candidate.pt'),
+            Path('models/checkpoints/voice_unified.pt'),
+        ]:
+            if candidate.exists():
+                args.checkpoint = candidate
+                break
+        if not args.checkpoint:
+            parser.error(f'{args.command} requires --checkpoint with speech training')
     if args.config and args.checkpoint:
         parser.error('Checkpoint already contains its configuration; omit --config')
     config = UnifiedConfig(**json.loads(args.config.read_text())) if args.config else UnifiedConfig()
@@ -317,7 +326,9 @@ def main():
         if args.reference:
             reference_wav = read_audio(args.reference, model.config.sample_rate)
         elif args.command == 'clone':
-            default_ref = Path('data/reference_voices/kullanici_sesi_raw.wav')
+            default_ref = Path('data/reference_voices/kullanici_orta_temiz.wav')
+            if not default_ref.exists():
+                default_ref = Path('data/reference_voices/kullanici_sesi_raw.wav')
             if not default_ref.exists():
                 default_ref = Path('data/reference_voices/kullanici_video_orijinal.wav')
             if default_ref.exists():
