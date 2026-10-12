@@ -186,7 +186,7 @@ class AlignedVoiceModel(nn.Module):
         return {'loss':loss,'spectral':spectral,'energy':energy,'delta':delta,'prior':prior_loss,'duration':duration_loss,'pitch':pitch_loss,'free_clock':free_loss,'path':path.detach()}
 
     @torch.inference_mode()
-    def stream(self,text,max_frames=500,temperature=0.,reference_wav=None,allow_untrained=False,clock_mode='hard',sharpen_formants=0.0):
+    def stream(self,text,max_frames=500,temperature=0.,reference_wav=None,allow_untrained=False,clock_mode=None,sharpen_formants=0.0):
         if temperature!=0:raise ValueError('Aligned synthesis uses temperature 0')
         if int(self.speech_steps)==0 and not allow_untrained:raise ValueError('Model not trained')
         if type(max_frames)!=int or max_frames<2:raise ValueError('At least two acoustic frames required')
@@ -203,8 +203,13 @@ class AlignedVoiceModel(nn.Module):
             energy = ref_spec_sub.mean(-1)
             speech_mask = (v_sub > 0.4) | (energy > -5.0)
             speech_spec = ref_spec_sub[speech_mask] if speech_mask.sum() > 8 else ref_spec_sub
-            ref_mean = speech_spec.mean(0)
-            ref_std = speech_spec.std(0).clamp_min(0.25)
+            raw_mean = speech_spec.mean(0)
+            raw_std = speech_spec.std(0).clamp_min(0.25)
+            # Preserve speaker vocal tract (<2.2 kHz) while preserving consonant intelligibility (>3.5 kHz)
+            freqs = torch.linspace(0, self.config.sample_rate / 2, self.codec.mean.numel(), device=raw_mean.device)
+            blend = ((freqs - 2200) / 1600).clamp(0, 1)
+            ref_mean = raw_mean * (1 - blend) + self.codec.mean.to(raw_mean.device) * blend
+            ref_std = raw_std * (1 - blend) + self.codec.std.to(raw_std.device) * blend
             f0_ref = (p_ref * 0.5 + math.log(200.)).exp()
             ref_median_f0 = float(f0_ref[v_ref > 0.5].median()) if (v_ref > 0.5).any() else 200.0
         features,pitch,_=self.predict_acoustics(text,clock_mode=clock_mode)
@@ -215,11 +220,6 @@ class AlignedVoiceModel(nn.Module):
             voiced = (voicing[0] > 0.2)
             base_median_f0 = float(base_f0[0][voiced].median().detach()) if voiced.any() else 200.0
             cloned_f0 = base_f0 * (ref_median_f0 / base_median_f0)
-            # Remove base comb filter so vocal tract formants are pure and match target pitch
-            frequencies = torch.linspace(0, self.config.sample_rate / 2, features.shape[-1], device=features.device)
-            comb_base = (.08 + .92 * torch.exp(-8 * torch.sin(math.pi * frequencies[None, None] / base_f0[..., None]).square())).log()
-            adj_base = comb_base * voicing[..., None] / self.codec.std.to(features.device).clamp_min(0.3)
-            features = features - adj_base
             # Natural cadence: declarative sentences have gentle fall, questions have gentle rising pitch
             if text.rstrip().endswith(('.', '!')) and features.shape[1] > 12:
                 fall_len = min(15, features.shape[1] // 4)
@@ -231,11 +231,14 @@ class AlignedVoiceModel(nn.Module):
                 cloned_f0[..., -rise_len:] *= rise
             pitch = pitch.clone()
             pitch[..., 0] = ((cloned_f0.log() - math.log(200.)) / 0.5).clamp(-2.1, 1.4)
-            # Vocal Tract Length Normalization (VTLN): warp formants to match speaker vocal tract
+            # Vocal Tract Length Normalization (VTLN): warp formants (<3.2 kHz) to match speaker vocal tract
             alpha = (ref_median_f0 / base_median_f0) ** (1/3)
             alpha = max(0.82, min(1.15, alpha))
             D = features.shape[-1]
-            src_bins = (torch.arange(D, device=features.device).float() / alpha).clamp(0, D - 1)
+            frequencies = torch.linspace(0, self.config.sample_rate / 2, D, device=features.device)
+            src_bins = torch.arange(D, device=features.device).float()
+            vtln_mask = frequencies < 3200
+            src_bins[vtln_mask] = (src_bins[vtln_mask] / alpha).clamp(0, D - 1)
             left = src_bins.floor().long().clamp(0, D - 2)
             frac = src_bins - left
             features = features[..., left] * (1 - frac) + features[..., left + 1] * frac
