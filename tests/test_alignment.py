@@ -316,6 +316,10 @@ def test_aligned_voice_stream_exact_pitch_centering_and_cadence():
     chunks = list(model.stream('Hello world.', max_frames=40, reference_wav=ref_audio))
     wave = torch.cat(chunks, -1)
     assert wave.shape[-1] > 0 and torch.isfinite(wave).all()
+    # Interrogative cadence
+    q_chunks = list(model.stream('How are you doing today?', max_frames=40, reference_wav=ref_audio))
+    q_wave = torch.cat(q_chunks, -1)
+    assert q_wave.shape[-1] > 0 and torch.isfinite(q_wave).all()
 
 def test_source_filter_formant_spectral_balance_and_sub_bass_reduction():
     """Validates that harmonic weighting suppresses sub-bass rumble and preserves mid-formants."""

@@ -220,11 +220,15 @@ class AlignedVoiceModel(nn.Module):
             comb_base = (.08 + .92 * torch.exp(-8 * torch.sin(math.pi * frequencies[None, None] / base_f0[..., None]).square())).log()
             adj_base = comb_base * voicing[..., None] / self.codec.std.to(features.device).clamp_min(0.3)
             features = features - adj_base
-            # Natural cadence: for declarative sentences, ensure gentle final fall
+            # Natural cadence: declarative sentences have gentle fall, questions have gentle rising pitch
             if text.rstrip().endswith(('.', '!')) and features.shape[1] > 12:
                 fall_len = min(15, features.shape[1] // 4)
                 fall = torch.linspace(1.0, 0.88, fall_len, device=cloned_f0.device)
                 cloned_f0[..., -fall_len:] *= fall
+            elif text.rstrip().endswith(('?', '¿')) and features.shape[1] > 12:
+                rise_len = min(15, features.shape[1] // 4)
+                rise = torch.linspace(1.0, 1.14, rise_len, device=cloned_f0.device)
+                cloned_f0[..., -rise_len:] *= rise
             pitch = pitch.clone()
             pitch[..., 0] = ((cloned_f0.log() - math.log(200.)) / 0.5).clamp(-2.1, 1.4)
             # Vocal Tract Length Normalization (VTLN): warp formants to match speaker vocal tract
