@@ -95,7 +95,13 @@ class LinearSpectrum(SpectralCodec):
         sample_amplitude=sample_amplitude*((self.sample_rate/2-sample_freqs)/800).clamp(0,1)
         # Disperse harmonic phases to eliminate zero-phase impulse-train buzzer timbre.
         schroeder=-math.pi*harmonics*(harmonics-1)/max(len(harmonics),1)
-        harmonic=(torch.sin(phase[:,None]*harmonics[None]+schroeder[None])*sample_amplitude).sum(-1)
+        # Diffuse phase jitter above Maximum Voiced Frequency (~2000 Hz) eliminates
+        # synthetic upper-harmonic comb-filter whistle while preserving low-harmonic pitch clarity.
+        gen=torch.Generator().manual_seed(97)
+        diffuse_weight=((frequencies-2000)/2500).clamp(0,1)
+        frame_jitter=(torch.rand((frames,len(harmonics)),generator=gen)*2-1)*math.pi*diffuse_weight
+        sample_jitter=interpolate(frame_jitter)
+        harmonic=(torch.sin(phase[:,None]*harmonics[None]+schroeder[None]+sample_jitter)*sample_amplitude).sum(-1)
         generator=torch.Generator().manual_seed(97)
         # Random phase alone cannot make a harmonic spectrum aperiodic. Smooth
         # its power over one pitch spacing before filtering the noise source.

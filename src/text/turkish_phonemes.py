@@ -76,11 +76,79 @@ def expand_turkish_number(number: int) -> str:
     return ' '.join(parts)
 
 
+def expand_turkish_ordinal(number: int) -> str:
+    """Expands an integer into its standard Turkish ordinal representation (e.g. 1 -> birinci)."""
+    base = expand_turkish_number(number)
+    words = base.split()
+    if not words:
+        return 'sıfırıncı'
+    last = words[-1]
+    if last == 'dört':
+        last = 'dörd'
+    vowels = [ch for ch in last if ch in 'aeıioöuü']
+    if not vowels:
+        return base
+    last_vowel = vowels[-1]
+    if last[-1] in 'aeıioöuü':
+        harmony = {'ı': 'ncı', 'a': 'ncı', 'i': 'nci', 'e': 'nci', 'u': 'ncu', 'o': 'ncu', 'ü': 'ncü', 'ö': 'ncü'}
+        suffix = harmony.get(last_vowel, 'nci')
+    else:
+        harmony = {'a': 'ıncı', 'ı': 'ıncı', 'e': 'inci', 'i': 'inci', 'o': 'uncu', 'u': 'uncu', 'ö': 'üncü', 'ü': 'üncü'}
+        suffix = harmony.get(last_vowel, 'inci')
+    words[-1] = last + suffix
+    return ' '.join(words)
+
+
 def normalize_turkish_text(text: str) -> str:
-    """Normalizes Turkish text respecting dotted/dotless I, circumflexes and numbers."""
+    """Normalizes Turkish text respecting dotted/dotless I, circumflexes, numbers, and ordinals."""
     if not isinstance(text, str) or not text.strip():
         raise ValueError('Nonempty text required')
     text = unicodedata.normalize('NFKC', text)
+    # Common Turkish abbreviations
+    abbreviations = {
+        r'\bvb\.': 've benzeri',
+        r'\bvs\.': 've saire',
+        r'\bdr\.': 'doktor',
+        r'\bprof\.': 'profesör',
+        r'\bkm\b': 'kilometre',
+        r'\bkg\b': 'kilogram',
+        r'\bcm\b': 'santimetre',
+        r'\bmm\b': 'milimetre',
+        r'\bdk\.': 'dakika',
+        r'\bsn\.': 'saniye',
+        r'\bsa\.': 'saat',
+    }
+    for pat, rep in abbreviations.items():
+        text = re.sub(pat, rep, text, flags=re.IGNORECASE)
+
+    # Convert clause juncture dashes to comma pauses
+    text = re.sub(r'\s+[-—–]\s+', ', ', text)
+
+    # Percentages
+    text = re.sub(r'%\s*(\d+)', r'yüzde \1', text)
+
+    # Currencies
+    text = re.sub(r'(\d+)\s*(?:tl|₺|lira)\b', r'\1 türk lirası', text, flags=re.IGNORECASE)
+    text = re.sub(r'(\d+)\s*(?:usd|\$|dolar)\b', r'\1 dolar', text, flags=re.IGNORECASE)
+    text = re.sub(r'(\d+)\s*(?:eur|€|euro)\b', r'\1 avro', text, flags=re.IGNORECASE)
+
+    # Explicit apostrophe ordinals: 1'inci, 2'nci, etc.
+    def replace_ord_apostrophe(match):
+        try:
+            return ' ' + expand_turkish_ordinal(int(match.group(1))) + ' '
+        except ValueError:
+            return match.group(0)
+    text = re.sub(r'\b(\d+)\s*[\'’]\s*(?:i?nci|ı?ncı|u?ncu|ü?ncü)\b', replace_ord_apostrophe, text, flags=re.IGNORECASE)
+
+    # Dot ordinals: e.g. "1. gün", "2. adım", "1. Bölüm"
+    def replace_dot_ordinal(match):
+        try:
+            return ' ' + expand_turkish_ordinal(int(match.group(1))) + ' '
+        except ValueError:
+            return match.group(0)
+    text = re.sub(r'\b(\d+)\.(?=\s+[a-zçğıöşü])', replace_dot_ordinal, text)
+    text = re.sub(r'\b(\d+)\.(?=\s+(?:Gün|Bölüm|Kat|Madde|Adım|Kısım|Sıra|Yüzyıl|Derece|Hafta|Ay)\b)', replace_dot_ordinal, text)
+
     # Correct Turkish case-folding: I -> ı, İ -> i
     # Standard Python .lower() erroneously converts I to i without locale.
     char_map = {
@@ -101,7 +169,7 @@ def normalize_turkish_text(text: str) -> str:
             return num_str
 
     text = re.sub(r'\d+', replace_num, text)
-    return text
+    return re.sub(r'\s+', ' ', text).strip()
 
 
 def turkish_word_to_phones(word: str) -> list[str]:

@@ -65,3 +65,45 @@ def test_auto_routing_in_english_phonemes():
     assert meta_ascii.get('lang') == 'tr'
     assert 'S' in meta_ascii['phones'] and 'V' in meta_ascii['phones']
 
+
+def test_turkish_ordinal_expansion():
+    from src.text.turkish_phonemes import expand_turkish_ordinal
+    assert expand_turkish_ordinal(1) == 'birinci'
+    assert expand_turkish_ordinal(2) == 'ikinci'
+    assert expand_turkish_ordinal(3) == 'üçüncü'
+    assert expand_turkish_ordinal(4) == 'dördüncü'
+    assert expand_turkish_ordinal(5) == 'beşinci'
+    assert expand_turkish_ordinal(6) == 'altıncı'
+    assert expand_turkish_ordinal(7) == 'yedinci'
+    assert expand_turkish_ordinal(8) == 'sekizinci'
+    assert expand_turkish_ordinal(9) == 'dokuzuncu'
+    assert expand_turkish_ordinal(10) == 'onuncu'
+    assert expand_turkish_ordinal(20) == 'yirminci'
+    assert expand_turkish_ordinal(21) == 'yirmi birinci'
+    assert expand_turkish_ordinal(100) == 'yüzüncü'
+
+
+def test_turkish_expanded_normalization():
+    # Ordinals in sentences
+    norm_ord = normalize_turkish_text('1. sınıfta 2’nci sırada oturdu.')
+    assert 'birinci' in norm_ord
+    assert 'ikinci' in norm_ord
+
+    # Percentages
+    norm_pct = normalize_turkish_text('Fiyatlarda %25 indirim var.')
+    assert 'yüzde' in norm_pct and 'yirmi beş' in norm_pct
+
+    # Currencies
+    norm_cur = normalize_turkish_text('Kitap 50 TL tuttu.')
+    assert 'elli türk lirası' in norm_cur
+
+    # Abbreviations
+    norm_abbr = normalize_turkish_text('vb. durumlar dr. ahmet tarafından incelendi.')
+    assert 've benzeri' in norm_abbr
+    assert 'doktor' in norm_abbr
+
+    # Clause juncture dashes
+    norm_dash = normalize_turkish_text('Hava güzel - dışarı çıkalım.')
+    assert ', ' in norm_dash
+
+
