@@ -220,6 +220,14 @@ class AlignedVoiceModel(nn.Module):
             voiced = (voicing[0] > 0.2)
             base_median_f0 = float(base_f0[0][voiced].median().detach()) if voiced.any() else 200.0
             cloned_f0 = base_f0 * (ref_median_f0 / base_median_f0)
+            # Bound pitch within natural speaker range around reference median
+            cloned_f0 = cloned_f0.clamp(ref_median_f0 * 0.65, ref_median_f0 * 1.65)
+            if cloned_f0.shape[-1] >= 5:
+                pad_m = 2
+                f0_pad = F.pad(cloned_f0, (pad_m, pad_m), mode='replicate')
+                f0_med, _ = f0_pad.unfold(-1, 5, 1).median(dim=-1)
+                smooth_kernel = torch.tensor([0.2, 0.6, 0.2], device=cloned_f0.device, dtype=cloned_f0.dtype).view(1, 1, 3)
+                cloned_f0 = F.conv1d(F.pad(f0_med.view(1, 1, -1), (1, 1), mode='replicate'), smooth_kernel).view(1, -1)
             # Natural cadence: declarative sentences have gentle fall, questions have gentle rising pitch
             if text.rstrip().endswith(('.', '!')) and features.shape[1] > 12:
                 fall_len = min(15, features.shape[1] // 4)

@@ -106,4 +106,13 @@ def test_turkish_expanded_normalization():
     norm_dash = normalize_turkish_text('Hava güzel - dışarı çıkalım.')
     assert ', ' in norm_dash
 
+def test_front_rounded_vowel_palatal_rules():
+    """Validates that 'ü' palatal glide applies only to velar consonants (gün, kül) and not others (üç, bütün)."""
+    assert 'Y' in turkish_word_to_phones('gün')
+    assert 'Y' in turkish_word_to_phones('kül')
+    assert turkish_word_to_phones('üç')[0] == 'UW1'
+    assert 'Y' not in turkish_word_to_phones('bütün')
+    assert 'Y' not in turkish_word_to_phones('türkçe')
+
+
 

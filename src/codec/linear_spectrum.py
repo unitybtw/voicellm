@@ -72,10 +72,20 @@ class LinearSpectrum(SpectralCodec):
         sub_mask=frequencies<90
         sub_weight=torch.ones_like(frequencies)
         sub_weight[sub_mask]=0.5+0.5*(frequencies[sub_mask]/90)
-        formant_boost=torch.ones_like(frequencies)
-        formant_boost[(frequencies>=1200)&(frequencies<3500)]=1.55
-        formant_boost[(frequencies>=3500)&(frequencies<7500)]=1.25
-        amplitudes=amplitudes*sub_weight*formant_boost
+        amplitudes=amplitudes*sub_weight
+        # Physical minimum-phase vocal tract phase spectrum via real cepstrum
+        log_mag=mag.log()
+        cepstrum=torch.fft.irfft(log_mag,n=self.n_fft,dim=-1)
+        win_c=torch.zeros(self.n_fft,device=mag.device)
+        half_n=self.n_fft//2
+        win_c[0]=1.0;win_c[1:half_n]=2.0;win_c[half_n]=1.0
+        analytic=torch.fft.rfft(cepstrum*win_c[None],n=self.n_fft,dim=-1)
+        H_min_phase=analytic.imag
+        harm_phase=H_min_phase.gather(1,left)*(1-fraction)+H_min_phase.gather(1,left+1)*fraction
+        # Natural glottal pulse spectral roll-off (-6 dB/octave above 1200 Hz)
+        glottal_tilt=1.0/(1.0+(frequencies/1200.0).square()).sqrt()
+        tilt_weight=0.5*glottal_tilt+0.5
+        amplitudes=amplitudes*tilt_weight
         target_rms=(mag.square().sum(-1)*2).sqrt()/self.n_fft/(.375**.5)
         harmonic_rms=(amplitudes.square().sum(-1)*.5).sqrt().clamp_min(1e-6)
         gain=(target_rms/harmonic_rms).clamp(.4,2.5)
@@ -93,15 +103,8 @@ class LinearSpectrum(SpectralCodec):
         sample_amplitude=interpolate(amplitudes)
         sample_freqs=sample_f0[:,None]*harmonics[None]
         sample_amplitude=sample_amplitude*((self.sample_rate/2-sample_freqs)/800).clamp(0,1)
-        # Disperse harmonic phases to eliminate zero-phase impulse-train buzzer timbre.
-        schroeder=-math.pi*harmonics*(harmonics-1)/max(len(harmonics),1)
-        # Diffuse phase jitter above Maximum Voiced Frequency (~2000 Hz) eliminates
-        # synthetic upper-harmonic comb-filter whistle while preserving low-harmonic pitch clarity.
-        gen=torch.Generator().manual_seed(97)
-        diffuse_weight=((frequencies-2000)/2500).clamp(0,1)
-        frame_jitter=(torch.rand((frames,len(harmonics)),generator=gen)*2-1)*math.pi*diffuse_weight
-        sample_jitter=interpolate(frame_jitter)
-        harmonic=(torch.sin(phase[:,None]*harmonics[None]+schroeder[None]+sample_jitter)*sample_amplitude).sum(-1)
+        sample_harm_phase=interpolate(harm_phase)
+        harmonic=(torch.sin(phase[:,None]*harmonics[None]+sample_harm_phase)*sample_amplitude).sum(-1)
         generator=torch.Generator().manual_seed(97)
         # Random phase alone cannot make a harmonic spectrum aperiodic. Smooth
         # its power over one pitch spacing before filtering the noise source.

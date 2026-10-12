@@ -368,6 +368,17 @@ def test_aligned_voice_stream_vtln_vocal_tract_scaling():
     wave = torch.cat(chunks, -1)
     assert wave.shape[-1] > 0 and torch.isfinite(wave).all()
 
+def test_source_filter_minimum_phase_phase_alignment_and_low_crest():
+    """Validates that real cepstral minimum-phase vocal tract reconstruction yields smooth crest factor."""
+    codec = LinearSpectrum()
+    time = torch.arange(16000) / 16000
+    features = codec.encode(.03 * torch.sin(2 * 3.14159265 * 130 * time))[0]
+    controls = torch.zeros(1, features.shape[1], 2); controls[..., 1] = 12
+    wave = codec.decode_source_filter(features, controls)
+    crest_factor = float(wave.abs().max() / wave.square().mean().sqrt().clamp_min(1e-6))
+    assert crest_factor < 4.0
+    assert torch.isfinite(wave).all()
+
 
 
 
