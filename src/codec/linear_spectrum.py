@@ -68,10 +68,10 @@ class LinearSpectrum(SpectralCodec):
         # Smooth Nyquist roll-off taper avoids sudden spectral step discontinuities.
         taper=((self.sample_rate/2-frequencies)/800).clamp(0,1)
         amplitudes=amplitudes*taper
-        # Attenuate sub-bass rumble (<250 Hz) and enhance vocal formant presence (1200-3500 Hz).
-        sub_mask=frequencies<250
+        # Attenuate sub-audible mechanical rumble (<90 Hz) while preserving male voice fundamental (100-180 Hz).
+        sub_mask=frequencies<90
         sub_weight=torch.ones_like(frequencies)
-        sub_weight[sub_mask]=0.5+0.5*(frequencies[sub_mask]/250)
+        sub_weight[sub_mask]=0.5+0.5*(frequencies[sub_mask]/90)
         formant_boost=torch.ones_like(frequencies)
         formant_boost[(frequencies>=1200)&(frequencies<3500)]=1.55
         formant_boost[(frequencies>=3500)&(frequencies<7500)]=1.25

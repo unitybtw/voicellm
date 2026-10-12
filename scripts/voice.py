@@ -326,7 +326,9 @@ def main():
         if args.reference:
             reference_wav = read_audio(args.reference, model.config.sample_rate)
         elif args.command == 'clone':
-            default_ref = Path('data/reference_voices/kullanici_orta_temiz.wav')
+            default_ref = Path('data/reference_voices/kullanici_yeni_kayit.wav')
+            if not default_ref.exists():
+                default_ref = Path('data/reference_voices/kullanici_orta_temiz.wav')
             if not default_ref.exists():
                 default_ref = Path('data/reference_voices/kullanici_sesi_raw.wav')
             if not default_ref.exists():
